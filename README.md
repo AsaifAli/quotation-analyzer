@@ -1,4 +1,4 @@
-# 📑 Quotation Intelligence Platform
+# 📑 QuoteSense — Procurement Intelligence
 
 **Portfolio-grade AI engineering project for procurement quotation analysis.**
 
