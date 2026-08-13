@@ -1,0 +1,19 @@
+QUOTATION A
+Supplier: Northstar Engineering
+Project: HVAC installation
+Cost: USD 125000
+Validity: 30 days
+Delivery: 8 weeks
+Features: Energy efficient units, commissioning, 2-year service
+Terms: 30% advance; balance on commissioning
+Contact: sales@example.com
+
+QUOTATION B
+Supplier: Apex Mechanical
+Project: HVAC installation
+Cost: USD 110000
+Validity: 15 days
+Delivery: 10 weeks
+Features: Standard units, commissioning
+Terms: 50% advance; balance before handover
+Contact: sales@example.com

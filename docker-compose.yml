@@ -1,0 +1,69 @@
+services:
+  litellm:
+    image: litellm/litellm:1.94.0
+    container_name: quotation-analyzer-litellm
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-local-dev-key}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_LITELLM_MODEL: ${OPENROUTER_LITELLM_MODEL:-openrouter/free}
+      GEMINI_LITELLM_MODEL: ${GEMINI_LITELLM_MODEL:-gemini/gemini-flash-lite-latest}
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      LLM_PROVIDER: ${LLM_PROVIDER:-litellm}
+      LITELLM_API_KEY: ${LITELLM_API_KEY:-local-dev-key}
+      LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://litellm:4000/v1}
+      LITELLM_MODEL: ${LITELLM_MODEL:-portfolio-free}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_ENABLED: ${OLLAMA_ENABLED:-false}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:4b}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_LITELLM_MODEL: ${OPENROUTER_LITELLM_MODEL:-openrouter/free}
+      GEMINI_LITELLM_MODEL: ${GEMINI_LITELLM_MODEL:-gemini/gemini-flash-lite-latest}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-120}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    command: ["uvicorn","app:app","--host","0.0.0.0","--port","8000"]
+    depends_on:
+      litellm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  streamlit:
+    build: .
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    command: ["streamlit","run","streamlit_app.py","--server.port","8501","--server.address","0.0.0.0","--server.headless","true"]
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
