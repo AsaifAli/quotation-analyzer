@@ -119,8 +119,8 @@ class LLMProvider:
     def __init__(self, provider: Optional[str] = None):
         requested = (provider or config.LLM_PROVIDER).lower()
         self.provider = self._resolve_provider(requested)
-        if self.provider not in {"ollama", "openai", "litellm", "gemini"}:
-            raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, or gemini")
+        if self.provider not in {"ollama", "openai", "litellm", "gateway", "gemini"}:
+            raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, gateway, or gemini")
         self._active_gemini_model = None
 
     def _resolve_provider(self, requested: str) -> str:
@@ -141,7 +141,7 @@ class LLMProvider:
     def model(self) -> str:
         if self.provider == "gemini":
             return self._active_gemini_model or config.GEMINI_MODEL
-        return {"ollama": config.OLLAMA_MODEL, "openai": config.OPENAI_MODEL, "litellm": config.LITELLM_MODEL}[self.provider]
+        return {"ollama": config.OLLAMA_MODEL, "openai": config.OPENAI_MODEL, "litellm": config.LITELLM_MODEL, "gateway": config.LLM_MODEL}[self.provider]
 
     def generate(self, prompt: str, system: str = "", temperature: float = 0.1,
                  schema: Optional[Dict[str, Any]] = None) -> str:
@@ -150,7 +150,7 @@ class LLMProvider:
             try:
                 if self.provider == "ollama":
                     return self._ollama(prompt, system, temperature, schema)
-                if self.provider in {"openai", "litellm"}:
+                if self.provider in {"openai", "litellm", "gateway"}:
                     return self._openai(prompt, system, temperature, schema)
                 return self._gemini(prompt, system, temperature, schema)
             except requests.HTTPError as exc:
@@ -194,7 +194,10 @@ class LLMProvider:
                 schema: Optional[Dict[str, Any]]) -> str:
         # LiteLLM is an OpenAI-compatible proxy, but its client credential is
         # intentionally separate from a direct OpenAI credential.
-        if self.provider == "litellm":
+        if self.provider == "gateway":
+            api_key = config.LLM_API_KEY
+            base_url = config.LLM_BASE_URL
+        elif self.provider == "litellm":
             api_key = config.LITELLM_API_KEY
             base_url = config.LITELLM_BASE_URL
         else:
@@ -202,7 +205,7 @@ class LLMProvider:
             base_url = config.OPENAI_BASE_URL
 
         if not api_key:
-            missing = "LITELLM_API_KEY" if self.provider == "litellm" else "OPENAI_API_KEY"
+            missing = "LLM_API_KEY" if self.provider == "gateway" else ("LITELLM_API_KEY" if self.provider == "litellm" else "OPENAI_API_KEY")
             raise RuntimeError(f"{missing} is not configured.")
 
         if schema:

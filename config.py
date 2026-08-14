@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "litellm").lower()
+# Shared portfolio gateway contract. Existing OPENAI_*/LITELLM_* vars remain supported.
+LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+LLM_MODEL = os.getenv("LLM_MODEL", "")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 # 4B is a better extraction/reasoning baseline than 1.7B; use 1.7B on constrained CPU hosts.
 OLLAMA_ENABLED = os.getenv("OLLAMA_ENABLED", "false").lower() == "true"

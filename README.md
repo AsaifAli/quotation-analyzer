@@ -1,4 +1,4 @@
-# 📑 QuoteSense — Procurement Intelligence
+# 📑 Quotation Intelligence Platform
 
 **Portfolio-grade AI engineering project for procurement quotation analysis.**
 
@@ -214,15 +214,16 @@ curl -X POST http://localhost:8000/analyze \
 - Shared public deployment should add authentication, rate limiting and persistent audit storage.
 - Procurement recommendations should be reviewed by a human before contractual decisions.
 
-## 🚀 Deployment
+## Suggested interview walkthrough
 
-**Status:** Deployed
-
-The application is deployed as a public portfolio demonstration.
-
-**Architecture:** GitHub Actions → Docker → Cloud deployment
-
-> Live demo access is provided selectively for evaluation/interviews.
+1. Upload two quotations.
+2. Show the extracted structured fields.
+3. Open **Validation** and point out missing information.
+4. Open **Scoring** and explain why cost/completeness are deterministic.
+5. Open **Evidence** to show traceability.
+6. Show the recommendation and explain that the LLM reasons over evidence rather than inventing facts.
+7. Open `/docs` to demonstrate the API boundary.
+8. Explain Docker Compose and the persistent Ollama model volume.
 
 ## Disclaimer
 
