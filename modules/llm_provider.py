@@ -119,8 +119,8 @@ class LLMProvider:
     def __init__(self, provider: Optional[str] = None):
         requested = (provider or config.LLM_PROVIDER).lower()
         self.provider = self._resolve_provider(requested)
-        if self.provider not in {"ollama", "openai", "litellm", "gateway", "gemini"}:
-            raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, gateway, or gemini")
+        if self.provider not in {"ollama", "openai", "litellm", "gemini"}:
+            raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, or gemini")
         self._active_gemini_model = None
 
     def _resolve_provider(self, requested: str) -> str:
@@ -141,7 +141,7 @@ class LLMProvider:
     def model(self) -> str:
         if self.provider == "gemini":
             return self._active_gemini_model or config.GEMINI_MODEL
-        return {"ollama": config.OLLAMA_MODEL, "openai": config.OPENAI_MODEL, "litellm": config.LITELLM_MODEL, "gateway": config.LLM_MODEL}[self.provider]
+        return {"ollama": config.OLLAMA_MODEL, "openai": config.OPENAI_MODEL, "litellm": config.LITELLM_MODEL}[self.provider]
 
     def generate(self, prompt: str, system: str = "", temperature: float = 0.1,
                  schema: Optional[Dict[str, Any]] = None) -> str:
@@ -150,7 +150,7 @@ class LLMProvider:
             try:
                 if self.provider == "ollama":
                     return self._ollama(prompt, system, temperature, schema)
-                if self.provider in {"openai", "litellm", "gateway"}:
+                if self.provider in {"openai", "litellm"}:
                     return self._openai(prompt, system, temperature, schema)
                 return self._gemini(prompt, system, temperature, schema)
             except requests.HTTPError as exc:
@@ -174,7 +174,7 @@ class LLMProvider:
 
     def _ollama(self, prompt: str, system: str, temperature: float, schema: Optional[Dict[str, Any]]) -> str:
         payload = {
-            "model": self.model,
+            **({"model": effective_model} if effective_model else {}),
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "stream": False,
             "format": schema or "json",
@@ -192,20 +192,23 @@ class LLMProvider:
 
     def _openai(self, prompt: str, system: str, temperature: float,
                 schema: Optional[Dict[str, Any]]) -> str:
-        # LiteLLM is an OpenAI-compatible proxy, but its client credential is
-        # intentionally separate from a direct OpenAI credential.
-        if self.provider == "gateway":
-            api_key = config.LLM_API_KEY
-            base_url = config.LLM_BASE_URL
+        gateway_token = get_llm_gateway_token()
+        gateway_url = (config.LLM_GATEWAY_URL or config.LLM_BASE_URL).strip()
+        if gateway_token and gateway_url:
+            api_key = gateway_token
+            base_url = gateway_url
+            effective_model = None  # gateway session owns the selected model
         elif self.provider == "litellm":
             api_key = config.LITELLM_API_KEY
             base_url = config.LITELLM_BASE_URL
+            effective_model = self.model
         else:
             api_key = config.OPENAI_API_KEY
             base_url = config.OPENAI_BASE_URL
+            effective_model = self.model
 
         if not api_key:
-            missing = "LLM_API_KEY" if self.provider == "gateway" else ("LITELLM_API_KEY" if self.provider == "litellm" else "OPENAI_API_KEY")
+            missing = "LLM_API_KEY/LLM_GATEWAY_URL" if gateway_url else ("LITELLM_API_KEY" if self.provider == "litellm" else "OPENAI_API_KEY")
             raise RuntimeError(f"{missing} is not configured.")
 
         if schema:
@@ -221,7 +224,6 @@ class LLMProvider:
             response_format = {"type": "json_object"}
 
         payload = {
-            "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "temperature": temperature,
             "response_format": response_format,

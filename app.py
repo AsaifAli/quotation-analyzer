@@ -8,6 +8,12 @@ import config
 app=FastAPI(title="Quotation Intelligence API",version="3.2.0",description="AI-assisted procurement quotation analysis with deterministic validation and scoring.")
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv("CORS_ORIGINS","http://localhost:8501").split(",") if x.strip()],allow_methods=["GET","POST"],allow_headers=["*"])
 
+@app.middleware("http")
+async def llm_gateway_context(request, call_next):
+    from llm_gateway_context import set_llm_gateway_token
+    set_llm_gateway_token(request.headers.get("X-LLM-Gateway-Token", ""))
+    return await call_next(request)
+
 @app.get("/health")
 def health(): return {"status":"ok","provider":config.LLM_PROVIDER}
 
