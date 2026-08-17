@@ -8,6 +8,16 @@ import config
 
 st.set_page_config(page_title="Quotation Intelligence", page_icon="📑", layout="wide")
 
+# Portfolio handoff: bind the temporary gateway JWT to this Streamlit execution.
+portfolio_token = str(st.query_params.get("portfolio_llm_session", "")).strip()
+if portfolio_token:
+    from llm_gateway_context import set_llm_gateway_token
+    set_llm_gateway_token(portfolio_token)
+    try:
+        del st.query_params["portfolio_llm_session"]
+    except Exception:
+        pass
+
 @st.cache_resource
 def get_agent():
     return QuotationIntelligenceAgent()
