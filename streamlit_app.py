@@ -41,13 +41,25 @@ set_llm_gateway_token(portfolio_token)
 # When the app is configured to use the portfolio gateway, a live handoff
 # session is required. Directly opening the Render URL must not pretend that
 # the AI backend is ready.
-gateway_mode = bool((config.LLM_GATEWAY_URL or config.OPENAI_BASE_URL).strip()) and ("portfolio-llm-gateway.onrender.com" in (config.LLM_GATEWAY_URL or config.OPENAI_BASE_URL).lower())
+gateway_mode = bool(config.LLM_GATEWAY_URL.strip())
 session_active = bool(portfolio_token)
 
 
-@st.cache_resource
-def get_agent():
-    return QuotationIntelligenceAgent()
+def get_agent(gateway_token: str = "") -> QuotationIntelligenceAgent:
+    """Build one agent per Streamlit browser session/token.
+
+    This mirrors the working EvidenceFlow pattern: the handoff token lives in
+    session_state and the agent is rebuilt when that token changes. We do not
+    rely on a global cached agent carrying a request-scoped ContextVar.
+    """
+    normalized = (gateway_token or "").strip()
+    cached_agent = st.session_state.get("quotesense_agent")
+    cached_token = st.session_state.get("quotesense_agent_gateway_token", "")
+    if cached_agent is None or cached_token != normalized:
+        cached_agent = QuotationIntelligenceAgent(gateway_token=normalized)
+        st.session_state["quotesense_agent"] = cached_agent
+        st.session_state["quotesense_agent_gateway_token"] = normalized
+    return cached_agent
 
 
 def money(v, currency=""):
@@ -278,7 +290,7 @@ def _render_evidence(result: dict) -> None:
 
 
 def main():
-    agent = get_agent()
+    agent = get_agent(portfolio_token)
     _render_header(agent, session_active, gateway_mode)
     _render_hero()
 

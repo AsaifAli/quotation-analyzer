@@ -9,12 +9,14 @@ services:
     envVars:
       - key: LLM_PROVIDER
         value: openai
-      - key: OPENAI_BASE_URL
-        value: https://portfolio-llm-gateway.onrender.com/v1
       - key: LLM_GATEWAY_URL
         value: https://portfolio-llm-gateway.onrender.com/v1
+      - key: OPENAI_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: OPENAI_API_KEY
+        sync: false
       - key: OPENAI_MODEL
-        value: gemini-3.5-flash-lite
+        value: openai/gpt-4o-mini
       - key: CORS_ORIGINS
         value: "*"
       - key: MAX_FILE_SIZE_MB
