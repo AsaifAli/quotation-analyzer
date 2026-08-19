@@ -41,7 +41,7 @@ set_llm_gateway_token(portfolio_token)
 # When the app is configured to use the portfolio gateway, a live handoff
 # session is required. Directly opening the Render URL must not pretend that
 # the AI backend is ready.
-gateway_mode = bool(config.LLM_GATEWAY_URL.strip())
+gateway_mode = bool((config.LLM_GATEWAY_URL or config.OPENAI_BASE_URL).strip()) and ("portfolio-llm-gateway.onrender.com" in (config.LLM_GATEWAY_URL or config.OPENAI_BASE_URL).lower())
 session_active = bool(portfolio_token)
 
 
