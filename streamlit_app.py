@@ -293,11 +293,11 @@ def main():
 
     st.markdown('<div class="qs-upload-label">Upload one or more supplier quotations</div>', unsafe_allow_html=True)
     uploaded = st.file_uploader(
-        "",
-        type=[x.lstrip('.') for x in config.SUPPORTED_FORMATS],
-        accept_multiple_files=True,
-        help="Upload PDF, DOCX, TXT or XLSX supplier quotation files.",
-    )
+    "Supplier quotation files",
+    type=[x.lstrip(".") for x in config.SUPPORTED_FORMATS],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+)
 
     result = st.session_state.get("result")
     _render_pipeline(bool(result))
