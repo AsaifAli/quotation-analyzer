@@ -20,38 +20,29 @@ st.set_page_config(
 )
 apply_theme()
 
-# Portfolio handoff: persist the temporary gateway JWT for the whole Streamlit session.
-# The portfolio app appends ?portfolio_llm_session=<JWT> when launching a demo.
-query_token = str(st.query_params.get("portfolio_llm_session", "")).strip()
-if query_token:
-    st.session_state["portfolio_llm_session"] = query_token
-    st.session_state.pop("portfolio_session_error", None)
+# Portfolio handoff: persist the temporary gateway JWT in Streamlit session state.
+# Streamlit reruns the script on nearly every interaction, so deleting the query
+# parameter without persisting it causes the gateway token to disappear before
+# the actual LLM call (leading to a misleading OPENAI_API_KEY-not-configured error).
+from llm_gateway_context import set_llm_gateway_token
+
+_HANDOFF_PARAM = "portfolio_llm_session"
+portfolio_token = str(st.query_params.get(_HANDOFF_PARAM, "") or "").strip()
+if portfolio_token:
+    st.session_state["portfolio_llm_session"] = portfolio_token
     try:
-        del st.query_params["portfolio_llm_session"]
+        del st.query_params[_HANDOFF_PARAM]
     except Exception:
         pass
 
-portfolio_token = str(st.session_state.get("portfolio_llm_session", "")).strip()
-if portfolio_token:
-    from llm_gateway_context import set_llm_gateway_token
+portfolio_token = str(st.session_state.get("portfolio_llm_session", "") or "").strip()
+set_llm_gateway_token(portfolio_token)
 
-    set_llm_gateway_token(portfolio_token)
-
-
-def _gateway_mode() -> bool:
-    """True when the deployment expects the shared portfolio gateway session."""
-    base_url = str(getattr(config, "LLM_GATEWAY_URL", "") or getattr(config, "OPENAI_BASE_URL", "") or "").lower()
-    return bool(getattr(config, "LLM_GATEWAY_URL", "")) or "portfolio-llm-gateway" in base_url
-
-
-def _session_active() -> bool:
-    return bool(str(st.session_state.get("portfolio_llm_session", "")).strip())
-
-
-def _clear_portfolio_session(message: str | None = None) -> None:
-    st.session_state.pop("portfolio_llm_session", None)
-    if message:
-        st.session_state["portfolio_session_error"] = message
+# When the app is configured to use the portfolio gateway, a live handoff
+# session is required. Directly opening the Render URL must not pretend that
+# the AI backend is ready.
+gateway_mode = bool(config.LLM_GATEWAY_URL.strip())
+session_active = bool(portfolio_token)
 
 
 @st.cache_resource
@@ -83,19 +74,9 @@ def _top_score(scores: list[dict]) -> dict | None:
     return scores[0] if scores else None
 
 
-def _render_header(agent: QuotationIntelligenceAgent) -> None:
-    gateway_mode = _gateway_mode()
-    session_active = _session_active()
-    if gateway_mode and session_active:
-        status_text = "Session active"
-        status_class = "active"
-    elif gateway_mode:
-        status_text = "Portfolio session required"
-        status_class = "warn"
-    else:
-        status_text = "Ready"
-        status_class = "active"
-
+def _render_header(agent: QuotationIntelligenceAgent, session_active: bool, gateway_mode: bool) -> None:
+    status_label = "Session active" if session_active else ("Session required" if gateway_mode else "Ready")
+    status_class = "" if session_active else (" warn" if gateway_mode else "")
     st.markdown(
         f"""
         <div class="qs-product-bar">
@@ -104,15 +85,11 @@ def _render_header(agent: QuotationIntelligenceAgent) -> None:
             <div class="qs-brand-title">QuoteSense</div>
             <div class="qs-brand-sub">Procurement intelligence · structured extraction · deterministic scoring · evidence-backed recommendation</div>
           </div>
-          <div class="qs-ready-pill {status_class}"><span></span> {status_text}</div>
+          <div class="qs-ready-pill{status_class}"><span></span> {status_label}</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-    session_error = st.session_state.pop("portfolio_session_error", None)
-    if session_error:
-        st.warning(session_error)
 
 
 def _render_hero() -> None:
@@ -301,43 +278,17 @@ def _render_evidence(result: dict) -> None:
 
 
 def main():
-    gateway_mode = _gateway_mode()
-    session_active = _session_active()
     agent = get_agent()
-    _render_header(agent)
+    _render_header(agent, session_active, gateway_mode)
     _render_hero()
-
-    if gateway_mode and not session_active:
-        st.markdown(
-            """
-            <div class="qs-session-card">
-              <div class="qs-session-kicker">SECURE PORTFOLIO SESSION</div>
-              <div class="qs-session-title">Launch QuoteSense from the portfolio to enable AI analysis.</div>
-              <div class="qs-session-copy">This deployment uses the shared portfolio LLM gateway. A short-lived session is passed securely when the portfolio launches this demo.</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.link_button(
-            "Open portfolio",
-            os.getenv("PORTFOLIO_URL", "https://asaifali-portfolio.vercel.app"),
-            type="primary",
-        )
 
     with st.sidebar:
         st.markdown('<div class="qs-sidebar-title">Analysis workspace</div>', unsafe_allow_html=True)
-        if gateway_mode:
-            session_label = "Session active" if session_active else "Portfolio session required"
-            session_class = "active" if session_active else "warn"
-            st.markdown(
-                f'<div class="qs-meta-chips"><span>Provider · {agent.llm.provider}</span><span>Model · {agent.llm.model}</span><span class="qs-session-chip {session_class}">{session_label}</span></div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f'<div class="qs-meta-chips"><span>Provider · {agent.llm.provider}</span><span>Model · {agent.llm.model}</span></div>',
-                unsafe_allow_html=True,
-            )
+        session_chip = "<span>Session · active</span>" if session_active else ("<span>Session · required</span>" if gateway_mode else "")
+        st.markdown(
+            f'<div class="qs-meta-chips"><span>Provider · {agent.llm.provider}</span><span>Model · {agent.llm.model}</span>{session_chip}</div>',
+            unsafe_allow_html=True,
+        )
         st.caption("Configure the decision criteria, then upload one or more supplier quotations.")
         query = st.text_area(
             "Analysis request",
@@ -353,10 +304,16 @@ def main():
             "🚀 Analyze quotations",
             type="primary",
             use_container_width=True,
-            disabled=gateway_mode and not session_active,
+            disabled=(gateway_mode and not session_active),
+            help=(
+                "Launch QuoteSense from the portfolio to start a secure AI session."
+                if gateway_mode and not session_active
+                else "Run quotation extraction, scoring, validation and recommendation."
+            ),
         )
         if gateway_mode and not session_active:
-            st.caption("AI analysis is disabled until a portfolio session is active.")
+            st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
+            st.link_button("Open portfolio", "https://asaifali-portfolio.vercel.app", use_container_width=True)
         st.divider()
         st.markdown('<div class="qs-sidebar-kicker">WORKFLOW</div>', unsafe_allow_html=True)
         st.markdown('<div class="qs-side-step">01 · Extract supplier terms</div>', unsafe_allow_html=True)
@@ -365,9 +322,10 @@ def main():
 
     st.markdown('<div class="qs-upload-label">Upload one or more supplier quotations</div>', unsafe_allow_html=True)
     uploaded = st.file_uploader(
-        "",
-        type=[x.lstrip('.') for x in config.SUPPORTED_FORMATS],
+        "Supplier quotation files",
+        type=[x.lstrip(".") for x in config.SUPPORTED_FORMATS],
         accept_multiple_files=True,
+        label_visibility="collapsed",
         help="Upload PDF, DOCX, TXT or XLSX supplier quotation files.",
     )
 
@@ -392,8 +350,8 @@ def main():
             st.warning("These documents have not been analyzed yet. Click Analyze quotations to replace the previous result set.")
 
     if run:
-        if gateway_mode and not _session_active():
-            st.warning("Your portfolio AI session is missing or has expired. Launch QuoteSense from the portfolio to continue.")
+        if gateway_mode and not session_active:
+            st.warning("Your portfolio AI session is missing or has expired. Launch QuoteSense from the portfolio and try again.")
         elif not uploaded:
             st.warning("Please upload at least one quotation before starting an analysis.")
         else:
@@ -419,10 +377,12 @@ def main():
                 st.toast("Quotation analysis complete", icon="✅")
             except Exception as exc:
                 message = str(exc)
-                lowered = message.lower()
-                if gateway_mode and ("401" in lowered or "unauthorized" in lowered or "expired" in lowered or "invalid demo session" in lowered):
-                    _clear_portfolio_session("Your portfolio AI session has expired or is no longer valid. Return to the portfolio and launch QuoteSense again to start a fresh secure session.")
-                    st.error("Portfolio session expired. Please launch QuoteSense again from the portfolio.")
+                normalized = message.lower()
+                if "401" in normalized or "unauthorized" in normalized or "demo session" in normalized or "bearer" in normalized:
+                    st.session_state.pop("portfolio_llm_session", None)
+                    set_llm_gateway_token("")
+                    st.error("Portfolio AI session expired or is no longer valid. Return to the portfolio and launch QuoteSense again to start a fresh secure session.")
+                    st.link_button("Return to portfolio", "https://asaifali-portfolio.vercel.app", use_container_width=True)
                 else:
                     st.error(f"Analysis failed: {message}")
             finally:
