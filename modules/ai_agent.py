@@ -19,11 +19,7 @@ class AgentState:
     metrics: Dict[str,Any]=field(default_factory=dict)
 
 class QuotationIntelligenceAgent:
-    def __init__(self, provider: Optional[str] = None, gateway_token: str = ""):
-        self.llm = LLMProvider(provider, gateway_token=gateway_token)
-        self.processor = DocumentProcessor()
-        self.web_search = WebSearch()
-        self.state = AgentState()
+    def __init__(self,provider:Optional[str]=None,gateway_token: str = ""): self.llm=LLMProvider(provider, gateway_token=gateway_token); self.processor=DocumentProcessor(); self.web_search=WebSearch(); self.state=AgentState()
     def _attach_evidence(self,q:Dict[str,Any], evidence:List[Dict[str,Any]]) -> Dict[str,Any]:
         supplier=(q.get("supplier") or "").lower(); refs=[]
         for item in evidence:

@@ -115,20 +115,15 @@ def _gemini_compatible_schema(schema: Optional[Dict[str, Any]]) -> Optional[Dict
 
 
 class LLMProvider:
-    """Expose one provider-independent generate/generate_json interface.
-
-    The portfolio gateway token is request/session scoped. Keep an explicit copy
-    on the provider rather than relying only on a module ContextVar; Streamlit
-    reruns and cached resources can otherwise lose the request scope.
-    """
+    """Expose one provider-independent generate/generate_json interface."""
 
     def __init__(self, provider: Optional[str] = None, gateway_token: str = ""):
         requested = (provider or config.LLM_PROVIDER).lower()
         self.provider = self._resolve_provider(requested)
         if self.provider not in {"ollama", "openai", "litellm", "gemini"}:
             raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, or gemini")
-        self.gateway_token = (gateway_token or "").strip()
         self._active_gemini_model = None
+        self.gateway_token = (gateway_token or "").strip()
 
     def _resolve_provider(self, requested: str) -> str:
         if requested != "auto":
@@ -199,8 +194,8 @@ class LLMProvider:
 
     def _openai(self, prompt: str, system: str, temperature: float,
                 schema: Optional[Dict[str, Any]]) -> str:
-        gateway_token = (self.gateway_token or get_llm_gateway_token()).strip()
-        gateway_url = (config.LLM_GATEWAY_URL or config.LLM_BASE_URL).strip()
+        gateway_token = self.gateway_token or get_llm_gateway_token()
+        gateway_url = config.LLM_GATEWAY_URL.strip()
         if gateway_token and gateway_url:
             api_key = gateway_token
             base_url = gateway_url
@@ -241,6 +236,12 @@ class LLMProvider:
             json=payload,
             timeout=config.REQUEST_TIMEOUT,
         )
+        if r.status_code == 401 and gateway_token:
+            try:
+                detail = r.json().get("detail") or r.json().get("error", {}).get("message") or r.text
+            except Exception:
+                detail = r.text
+            raise RuntimeError(f"Portfolio LLM Gateway rejected the session: {detail}")
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
 

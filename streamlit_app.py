@@ -1,11 +1,14 @@
 """Portfolio-ready Streamlit dashboard for quotation intelligence."""
+import base64
 import json
 import os
 import tempfile
+import time
 from typing import Any
 
 import pandas as pd
 import plotly.express as px
+import requests
 import streamlit as st
 
 from modules.ai_agent import QuotationIntelligenceAgent
@@ -27,9 +30,59 @@ apply_theme()
 from llm_gateway_context import set_llm_gateway_token
 
 _HANDOFF_PARAM = "portfolio_llm_session"
+_GATEWAY_STATUS_CACHE_SECONDS = 8
+
+
+def _decode_jwt_claims(token: str) -> dict[str, Any]:
+    """Decode JWT payload for display-only metadata; never trust these claims for auth."""
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return {}
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        return json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+    except Exception:
+        return {}
+
+
+def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
+    if not token or not config.LLM_GATEWAY_URL.strip():
+        return False, {}
+    now = time.time()
+    cached_at = float(st.session_state.get("gateway_status_checked_at", 0) or 0)
+    if now - cached_at < _GATEWAY_STATUS_CACHE_SECONDS and "gateway_status" in st.session_state:
+        return bool(st.session_state["gateway_status"]), dict(st.session_state.get("gateway_session", {}) or {})
+    try:
+        r = requests.get(
+            f"{config.LLM_GATEWAY_URL.rstrip('/')}/demo/session/status",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5,
+        )
+        if r.ok:
+            data = r.json()
+            st.session_state["gateway_status"] = True
+            st.session_state["gateway_session"] = data
+            st.session_state["gateway_status_checked_at"] = now
+            return True, data
+        st.session_state["gateway_status"] = False
+        st.session_state["gateway_session"] = {}
+        st.session_state["gateway_status_checked_at"] = now
+        return False, {}
+    except requests.RequestException:
+        # Keep the local token available if the status endpoint is temporarily unavailable.
+        # The actual completion request remains authoritative.
+        st.session_state["gateway_status"] = bool(token)
+        st.session_state["gateway_session"] = {}
+        st.session_state["gateway_status_checked_at"] = now
+        return bool(token), {}
+
+
 portfolio_token = str(st.query_params.get(_HANDOFF_PARAM, "") or "").strip()
 if portfolio_token:
     st.session_state["portfolio_llm_session"] = portfolio_token
+    st.session_state.pop("gateway_status_checked_at", None)
+    st.session_state.pop("gateway_status", None)
+    st.session_state.pop("gateway_session", None)
     try:
         del st.query_params[_HANDOFF_PARAM]
     except Exception:
@@ -38,28 +91,18 @@ if portfolio_token:
 portfolio_token = str(st.session_state.get("portfolio_llm_session", "") or "").strip()
 set_llm_gateway_token(portfolio_token)
 
-# When the app is configured to use the portfolio gateway, a live handoff
-# session is required. Directly opening the Render URL must not pretend that
-# the AI backend is ready.
 gateway_mode = bool(config.LLM_GATEWAY_URL.strip())
-session_active = bool(portfolio_token)
+local_claims = _decode_jwt_claims(portfolio_token) if portfolio_token else {}
+server_session_active, server_session = _gateway_status(portfolio_token) if (gateway_mode and portfolio_token) else (False, {})
+session_active = server_session_active if gateway_mode else bool(portfolio_token)
+session_provider = str(server_session.get("provider") or local_claims.get("provider") or "")
+session_model = str(server_session.get("model") or local_claims.get("model") or "")
 
 
-def get_agent(gateway_token: str = "") -> QuotationIntelligenceAgent:
-    """Build one agent per Streamlit browser session/token.
-
-    This mirrors the working EvidenceFlow pattern: the handoff token lives in
-    session_state and the agent is rebuilt when that token changes. We do not
-    rely on a global cached agent carrying a request-scoped ContextVar.
-    """
-    normalized = (gateway_token or "").strip()
-    cached_agent = st.session_state.get("quotesense_agent")
-    cached_token = st.session_state.get("quotesense_agent_gateway_token", "")
-    if cached_agent is None or cached_token != normalized:
-        cached_agent = QuotationIntelligenceAgent(gateway_token=normalized)
-        st.session_state["quotesense_agent"] = cached_agent
-        st.session_state["quotesense_agent_gateway_token"] = normalized
-    return cached_agent
+def get_agent(gateway_token: str = ""):
+    # Explicit request/session injection: matches the working LegacyLens architecture
+    # and avoids relying on a cached agent carrying mutable request state.
+    return QuotationIntelligenceAgent(gateway_token=gateway_token)
 
 
 def money(v, currency=""):
@@ -86,8 +129,8 @@ def _top_score(scores: list[dict]) -> dict | None:
     return scores[0] if scores else None
 
 
-def _render_header(agent: QuotationIntelligenceAgent, session_active: bool, gateway_mode: bool) -> None:
-    status_label = "Session active" if session_active else ("Session required" if gateway_mode else "Ready")
+def _render_header(agent: QuotationIntelligenceAgent, session_active: bool, gateway_mode: bool, session_provider: str = "", session_model: str = "") -> None:
+    status_label = ("Session active" if session_active else ("Session invalid" if gateway_mode and portfolio_token else ("Session required" if gateway_mode else "Ready")))
     status_class = "" if session_active else (" warn" if gateway_mode else "")
     st.markdown(
         f"""
@@ -291,14 +334,14 @@ def _render_evidence(result: dict) -> None:
 
 def main():
     agent = get_agent(portfolio_token)
-    _render_header(agent, session_active, gateway_mode)
+    _render_header(agent, session_active, gateway_mode, session_provider, session_model)
     _render_hero()
 
     with st.sidebar:
         st.markdown('<div class="qs-sidebar-title">Analysis workspace</div>', unsafe_allow_html=True)
         session_chip = "<span>Session · active</span>" if session_active else ("<span>Session · required</span>" if gateway_mode else "")
         st.markdown(
-            f'<div class="qs-meta-chips"><span>Provider · {agent.llm.provider}</span><span>Model · {agent.llm.model}</span>{session_chip}</div>',
+            f'<div class="qs-meta-chips"><span>Provider · {session_provider or agent.llm.provider}</span><span>Model · {session_model or agent.llm.model}</span>{session_chip}</div>',
             unsafe_allow_html=True,
         )
         st.caption("Configure the decision criteria, then upload one or more supplier quotations.")
@@ -324,7 +367,10 @@ def main():
             ),
         )
         if gateway_mode and not session_active:
-            st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
+            if portfolio_token:
+                st.error("The portfolio token is present, but the gateway rejected this session. Start a fresh AI session in the portfolio and launch QuoteSense again.")
+            else:
+                st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
             st.link_button("Open portfolio", "https://asaifali-portfolio.vercel.app", use_container_width=True)
         st.divider()
         st.markdown('<div class="qs-sidebar-kicker">WORKFLOW</div>', unsafe_allow_html=True)
