@@ -52,18 +52,23 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
     cached_at = float(st.session_state.get("gateway_status_checked_at", 0) or 0)
     if now - cached_at < _GATEWAY_STATUS_CACHE_SECONDS and "gateway_status" in st.session_state:
         return bool(st.session_state["gateway_status"]), dict(st.session_state.get("gateway_session", {}) or {})
-    url = f"{config.LLM_GATEWAY_URL.rstrip('/')}/demo/session/status"
+    url = f"{config.LLM_GATEWAY_URL.strip().rstrip('/')}/demo/session/status"
     try:
         r = requests.get(
             url,
-            headers={"Authorization": f"Bearer {token}"},
+            headers={"Authorization": f"Bearer {token}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
             timeout=5,
         )
         # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
         st.session_state["gateway_debug"] = {
             "url": url,
             "status_code": r.status_code,
-            "body": (r.text or "")[:500],
+            "body": r.text or "(empty body)",
+            "cache_control": r.headers.get("Cache-Control", "(none)"),
+            "cf_cache_status": r.headers.get("CF-Cache-Status", "(none)"),
+            "age": r.headers.get("Age", "(none)"),
+            "etag": r.headers.get("ETag", "(none)"),
+            "server": r.headers.get("Server", "(none)"),
         }
         if r.ok:
             data = r.json()
@@ -381,9 +386,19 @@ def main():
                 debug = st.session_state.get("gateway_debug")
                 if debug:
                     with st.expander("Debug: gateway response (temporary)", expanded=True):
-                        st.code(
-                            f"GET {debug.get('url')}\nStatus: {debug.get('status_code')}\nBody: {debug.get('body')}",
-                            language="text",
+                        st.text_area(
+                            "Raw diagnostic (copy this)",
+                            value=(
+                                f"URL: {debug.get('url')}\n"
+                                f"Status: {debug.get('status_code')}\n"
+                                f"Server: {debug.get('server', '')}\n"
+                                f"Cache-Control: {debug.get('cache_control', '')}\n"
+                                f"CF-Cache-Status: {debug.get('cf_cache_status', '')}\n"
+                                f"Age: {debug.get('age', '')}\n"
+                                f"ETag: {debug.get('etag', '')}\n"
+                                f"Body: {debug.get('body')}"
+                            ),
+                            height=220,
                         )
             else:
                 st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
