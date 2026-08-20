@@ -118,12 +118,32 @@ class LLMProvider:
     """Expose one provider-independent generate/generate_json interface."""
 
     def __init__(self, provider: Optional[str] = None, gateway_token: str = ""):
+        self._active_gemini_model = None
+
+        # Resolve the gateway session BEFORE touching local provider config.
+        # A BYOK gateway session is provider-agnostic (the gateway resolves the
+        # real upstream provider/model server-side and always speaks the
+        # OpenAI-compatible wire format), so its presence must short-circuit
+        # local provider resolution entirely. Previously local provider
+        # resolution ran first and could raise (LLM_PROVIDER=auto with no
+        # local cloud key configured) or silently win the dispatch in
+        # generate() (LLM_PROVIDER=gemini/ollama), both of which caused a
+        # valid gateway token to never be used.
+        self.gateway_token = (gateway_token or "").strip() or get_llm_gateway_token()
+        self.gateway_url = config.LLM_GATEWAY_URL.strip()
+        self.use_gateway = bool(self.gateway_token and self.gateway_url)
+
+        if self.use_gateway:
+            # The gateway always exposes an OpenAI-compatible endpoint; the
+            # actual upstream provider/model is chosen server-side by the
+            # gateway session, not by local config.
+            self.provider = "openai"
+            return
+
         requested = (provider or config.LLM_PROVIDER).lower()
         self.provider = self._resolve_provider(requested)
         if self.provider not in {"ollama", "openai", "litellm", "gemini"}:
             raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, or gemini")
-        self._active_gemini_model = None
-        self.gateway_token = (gateway_token or "").strip()
 
     def _resolve_provider(self, requested: str) -> str:
         if requested != "auto":
@@ -141,6 +161,10 @@ class LLMProvider:
 
     @property
     def model(self) -> str:
+        if self.use_gateway:
+            # The gateway session (not local config) owns the real model;
+            # session status metadata is what displays the true value.
+            return "gateway-session"
         if self.provider == "gemini":
             return self._active_gemini_model or config.GEMINI_MODEL
         return {"ollama": config.OLLAMA_MODEL, "openai": config.OPENAI_MODEL, "litellm": config.LITELLM_MODEL}[self.provider]
@@ -150,6 +174,8 @@ class LLMProvider:
         last = None
         for attempt in range(config.LLM_MAX_RETRIES + 1):
             try:
+                if self.use_gateway:
+                    return self._openai(prompt, system, temperature, schema)
                 if self.provider == "ollama":
                     return self._ollama(prompt, system, temperature, schema)
                 if self.provider in {"openai", "litellm"}:
@@ -176,7 +202,7 @@ class LLMProvider:
 
     def _ollama(self, prompt: str, system: str, temperature: float, schema: Optional[Dict[str, Any]]) -> str:
         payload = {
-            **({"model": effective_model} if effective_model else {}),
+            "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "stream": False,
             "format": schema or "json",
@@ -306,6 +332,13 @@ class LLMProvider:
         ) from last_404
 
     def health(self) -> Dict[str, Any]:
+        if self.use_gateway:
+            return {
+                "provider": "gateway",
+                "model": self.model,
+                "available": True,
+                "gateway": self.gateway_url,
+            }
         if self.provider == "ollama":
             try:
                 r = requests.get(f"{config.OLLAMA_BASE_URL.rstrip('/')}/api/tags", timeout=5)
