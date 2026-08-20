@@ -52,12 +52,19 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
     cached_at = float(st.session_state.get("gateway_status_checked_at", 0) or 0)
     if now - cached_at < _GATEWAY_STATUS_CACHE_SECONDS and "gateway_status" in st.session_state:
         return bool(st.session_state["gateway_status"]), dict(st.session_state.get("gateway_session", {}) or {})
+    url = f"{config.LLM_GATEWAY_URL.rstrip('/')}/demo/session/status"
     try:
         r = requests.get(
-            f"{config.LLM_GATEWAY_URL.rstrip('/')}/demo/session/status",
+            url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=5,
         )
+        # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
+        st.session_state["gateway_debug"] = {
+            "url": url,
+            "status_code": r.status_code,
+            "body": (r.text or "")[:500],
+        }
         if r.ok:
             data = r.json()
             st.session_state["gateway_status"] = True
@@ -68,7 +75,9 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
         st.session_state["gateway_session"] = {}
         st.session_state["gateway_status_checked_at"] = now
         return False, {}
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        # TEMPORARY DEBUG: capture the raw exception for on-screen diagnosis.
+        st.session_state["gateway_debug"] = {"url": url, "status_code": None, "body": f"{type(exc).__name__}: {exc}"}
         # Keep the local token available if the status endpoint is temporarily unavailable.
         # The actual completion request remains authoritative.
         st.session_state["gateway_status"] = bool(token)
@@ -369,6 +378,13 @@ def main():
         if gateway_mode and not session_active:
             if portfolio_token:
                 st.error("The portfolio token is present, but the gateway rejected this session. Start a fresh AI session in the portfolio and launch QuoteSense again.")
+                debug = st.session_state.get("gateway_debug")
+                if debug:
+                    with st.expander("Debug: gateway response (temporary)", expanded=True):
+                        st.code(
+                            f"GET {debug.get('url')}\nStatus: {debug.get('status_code')}\nBody: {debug.get('body')}",
+                            language="text",
+                        )
             else:
                 st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
             st.link_button("Open portfolio", "https://asaifali-portfolio.vercel.app", use_container_width=True)
