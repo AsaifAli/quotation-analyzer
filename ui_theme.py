@@ -111,6 +111,21 @@ body {{ overflow-x:hidden!important; }}
 }}
 header[data-testid="stHeader"] {{ background:transparent!important; }}
 
+
+/* Keep Streamlit's native sidebar collapse/expand control usable.
+   Streamlit 1.38+ uses stSidebarCollapseButton (older releases used
+   collapsedControl). */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="collapsedControl"],
+[data-testid="collapsedControl"] button {{
+  display: flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  pointer-events: auto !important;
+  position: relative;
+  z-index: 100000 !important;
+}}
 [data-testid="stAppViewContainer"]>.main .block-container {{
   max-width:1500px!important;
   padding-top:1.05rem!important;
