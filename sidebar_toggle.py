@@ -42,9 +42,33 @@ _TOGGLE_HTML = r"""
   // hosted-only behaviour where a fresh local run starts expanded but the same
   // public URL starts collapsed.  Reset sidebar-related preferences once per
   // browser-tab session, then reload so Streamlit applies initial_sidebar_state.
+  //
+  // IMPORTANT: this must never fire while a one-time portfolio handoff token
+  // (?portfolio_llm_session=...) is present in the URL. The very first visit
+  // in a fresh browser tab — which is exactly when this recovery check runs —
+  // is also exactly when that token is present and Streamlit is in the
+  // middle of reading it, storing it in session state, and stripping it from
+  // the URL. A reload firing in that narrow window races the token handoff:
+  // it can reload the page after the token has already been stripped from
+  // the visible URL, with no guarantee the freshly-processed session state
+  // survives a full browser-level reload. Recovery is deferred (not
+  // skipped) — it will simply run on the next visit once the handoff param
+  // is gone.
+  const HANDOFF_PARAM = "portfolio_llm_session";
+  const hasPendingHandoff = () => {
+    try {
+      return new URLSearchParams(parentWindow.location.search).has(HANDOFF_PARAM);
+    } catch (_) {
+      return false;
+    }
+  };
+
   const RECOVERY_FLAG = "quotesense-sidebar-recovery-v1";
 
   const recoverPersistedSidebarState = () => {
+    if (hasPendingHandoff()) {
+      return false;
+    }
     try {
       if (parentWindow.sessionStorage.getItem(RECOVERY_FLAG) === "1") {
         return;

@@ -7,7 +7,7 @@ LLM_PROVIDER = os.getenv("LLM_PROVIDER", "litellm").lower()
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "")
-LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "")
+LLM_GATEWAY_URL = os.getenv("LLM_GATEWAY_URL", "").strip()
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://ollama:11434")
 # 4B is a better extraction/reasoning baseline than 1.7B; use 1.7B on constrained CPU hosts.
 OLLAMA_ENABLED = os.getenv("OLLAMA_ENABLED", "false").lower() == "true"
