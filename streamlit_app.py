@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 from typing import Any
-
+import html
 import pandas as pd
 import plotly.express as px
 import requests
@@ -26,6 +26,7 @@ apply_theme()
 render_sidebar_toggle()
 
 # Portfolio handoff: persist the temporary gateway JWT in Streamlit session state.
+# Keep the query parameter so full-page refreshes can reconstruct the session.
 # Streamlit reruns the script on nearly every interaction, so deleting the query
 # parameter without persisting it causes the gateway token to disappear before
 # the actual LLM call (leading to a misleading OPENAI_API_KEY-not-configured error).
@@ -99,10 +100,12 @@ if portfolio_token:
     st.session_state.pop("gateway_status_checked_at", None)
     st.session_state.pop("gateway_status", None)
     st.session_state.pop("gateway_session", None)
-    try:
-        del st.query_params[_HANDOFF_PARAM]
-    except Exception:
-        pass
+    # Keep the handoff token in the URL so a browser refresh can reconstruct the
+    # same portfolio-backed session. The gateway remains authoritative via
+    # /demo/session/status, so this does not extend or refresh the token.
+    # Removing the parameter here would strand a new Streamlit session after
+    # refresh because Streamlit session_state is not guaranteed to survive a
+    # full browser reload.
 
 portfolio_token = str(st.session_state.get("portfolio_llm_session", "") or "").strip()
 set_llm_gateway_token(portfolio_token)
