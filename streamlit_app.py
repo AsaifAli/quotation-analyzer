@@ -14,6 +14,7 @@ import streamlit as st
 from modules.ai_agent import QuotationIntelligenceAgent
 import config
 from ui_theme import apply_theme
+from sidebar_toggle import render_sidebar_toggle
 
 st.set_page_config(
     page_title="QuoteSense · Procurement Intelligence",
@@ -22,6 +23,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 apply_theme()
+render_sidebar_toggle()
 
 # Portfolio handoff: persist the temporary gateway JWT in Streamlit session state.
 # Streamlit reruns the script on nearly every interaction, so deleting the query
@@ -59,17 +61,17 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
             headers={"Authorization": f"Bearer {token}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
             timeout=5,
         )
-        # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
-        st.session_state["gateway_debug"] = {
-            "url": url,
-            "status_code": r.status_code,
-            "body": r.text or "(empty body)",
-            "cache_control": r.headers.get("Cache-Control", "(none)"),
-            "cf_cache_status": r.headers.get("CF-Cache-Status", "(none)"),
-            "age": r.headers.get("Age", "(none)"),
-            "etag": r.headers.get("ETag", "(none)"),
-            "server": r.headers.get("Server", "(none)"),
-        }
+        # # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
+        # st.session_state["gateway_debug"] = {
+        #     "url": url,
+        #     "status_code": r.status_code,
+        #     "body": r.text or "(empty body)",
+        #     "cache_control": r.headers.get("Cache-Control", "(none)"),
+        #     "cf_cache_status": r.headers.get("CF-Cache-Status", "(none)"),
+        #     "age": r.headers.get("Age", "(none)"),
+        #     "etag": r.headers.get("ETag", "(none)"),
+        #     "server": r.headers.get("Server", "(none)"),
+        # }
         if r.ok:
             data = r.json()
             st.session_state["gateway_status"] = True
@@ -82,7 +84,7 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
         return False, {}
     except requests.RequestException as exc:
         # TEMPORARY DEBUG: capture the raw exception for on-screen diagnosis.
-        st.session_state["gateway_debug"] = {"url": url, "status_code": None, "body": f"{type(exc).__name__}: {exc}"}
+        # st.session_state["gateway_debug"] = {"url": url, "status_code": None, "body": f"{type(exc).__name__}: {exc}"}
         # Keep the local token available if the status endpoint is temporarily unavailable.
         # The actual completion request remains authoritative.
         st.session_state["gateway_status"] = bool(token)
@@ -149,10 +151,15 @@ def _render_header(agent: QuotationIntelligenceAgent, session_active: bool, gate
     st.markdown(
         f"""
         <div class="qs-product-bar">
-          <div class="qs-brand-dot"></div>
+          <div class="qs-brand-mark">$</div>
           <div class="qs-brand-copy">
             <div class="qs-brand-title">QuoteSense</div>
-            <div class="qs-brand-sub">Procurement intelligence · structured extraction · deterministic scoring · evidence-backed recommendation</div>
+            <div class="qs-brand-sub">Procurement intelligence · evidence-backed quotation decisions</div>
+          </div>
+          <div class="qs-product-meta">
+            <span class="qs-mini-chip">Structured extraction</span>
+            <span class="qs-mini-chip">Deterministic scoring</span>
+            <span class="qs-mini-chip">Risk + recommendation</span>
           </div>
           <div class="qs-ready-pill{status_class}"><span></span> {status_label}</div>
         </div>
@@ -164,9 +171,22 @@ def _render_header(agent: QuotationIntelligenceAgent, session_active: bool, gate
 def _render_hero() -> None:
     st.markdown(
         """
-        <div class="qs-kicker">QUOTATION INTELLIGENCE</div>
-        <div class="qs-hero-title">Turn supplier quotations into a decision.</div>
-        <div class="qs-hero-sub">Extract commercial terms, validate completeness, compare suppliers, surface risk, and explain the strongest option.</div>
+        <div class="qs-hero">
+          <div class="qs-hero-copy">
+            <div class="qs-kicker">QUOTATION INTELLIGENCE</div>
+            <div class="qs-hero-title">Turn supplier quotations into a decision.</div>
+            <div class="qs-hero-sub">Extract commercial terms, normalize suppliers, score trade-offs, surface risk, and produce an evidence-backed recommendation — without hiding the deterministic logic behind the ranking.</div>
+            <div class="qs-hero-chips">
+              <span>Evidence-backed</span><span>Deterministic ranking</span><span>Multi-document</span><span>Human-review friendly</span>
+            </div>
+          </div>
+          <div class="qs-hero-panel">
+            <div class="qs-hero-panel-kicker">DECISION FLOW</div>
+            <div class="qs-flow-item"><span>01</span><div><strong>Extract</strong><small>Terms, prices, timelines, validity</small></div></div>
+            <div class="qs-flow-item"><span>02</span><div><strong>Score</strong><small>Transparent multi-criteria ranking</small></div></div>
+            <div class="qs-flow-item"><span>03</span><div><strong>Decide</strong><small>Risks, trade-offs and recommendation</small></div></div>
+          </div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -174,15 +194,15 @@ def _render_hero() -> None:
 
 def _render_pipeline(has_result: bool) -> None:
     states = [
-        ("1", "Extract", "Structured fields + source evidence.", True),
-        ("2", "Score", "Deterministic multi-criteria ranking.", has_result),
-        ("3", "Decide", "Risks, trade-offs + recommendation.", has_result),
+        ("01", "Extract", "Structured terms + source evidence.", True),
+        ("02", "Score", "Deterministic multi-criteria ranking.", has_result),
+        ("03", "Decide", "Risks, trade-offs + recommendation.", has_result),
     ]
     cols = st.columns(3, gap="medium")
     for col, (num, title, sub, done) in zip(cols, states):
         with col:
             state_class = "done" if done else "pending"
-            icon = "✓" if done else "·"
+            icon = "✓" if done else "○"
             st.markdown(
                 f"""
                 <div class="qs-step {state_class}">
@@ -199,13 +219,46 @@ def _render_empty_state(uploaded: list | None) -> None:
         return
     st.markdown(
         """
-        <div class="qs-empty-card">
-          <div class="qs-empty-kicker">READY TO ANALYZE</div>
-          <div class="qs-empty-title">Add quotations to start</div>
-          <div class="qs-empty-copy">Upload one or more supplier files. QuoteSense will extract the commercial terms, compare suppliers, flag risk, and produce an evidence-linked recommendation.</div>
-          <div class="qs-empty-actions">
-            <span>Upload quotations</span><span>•</span><span>Set criteria</span><span>•</span><span>Analyze</span>
+        <div class="qs-ready-grid">
+          <div class="qs-ready-card main">
+            <div class="qs-empty-kicker">READY TO ANALYZE</div>
+            <div class="qs-empty-title">Bring the quotations. Keep the decision logic visible.</div>
+            <div class="qs-empty-copy">Upload supplier files, choose the criteria that matter, and QuoteSense will turn unstructured quotations into a transparent procurement comparison.</div>
+            <div class="qs-empty-actions"><span>Upload</span><span>→</span><span>Extract</span><span>→</span><span>Score</span><span>→</span><span>Recommend</span></div>
           </div>
+          <div class="qs-ready-card"><div class="qs-card-kicker">WHAT YOU GET</div><strong>Comparable supplier terms</strong><small>Cost, timeline, validity and key commercial features in one view.</small></div>
+          <div class="qs-ready-card"><div class="qs-card-kicker">WHY IT MATTERS</div><strong>Risk before commitment</strong><small>Validation gaps and supplier-specific risks are surfaced before the recommendation.</small></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_workspace_status(uploaded: list | None, result: dict | None, criteria_count: int) -> None:
+    file_count = len(uploaded or [])
+    analyzed = len((result or {}).get("quotations", []) or [])
+    if result:
+        status = "Analysis complete"
+        status_tone = "complete"
+        primary_count = analyzed
+        secondary = "recommendation ready"
+    elif file_count:
+        status = "Ready to analyze"
+        status_tone = "ready"
+        primary_count = file_count
+        secondary = "files ready"
+    else:
+        status = "Awaiting quotations"
+        status_tone = "waiting"
+        primary_count = 0
+        secondary = "not analyzed yet"
+    st.markdown(
+        f"""
+        <div class="qs-workspace-strip {status_tone}">
+          <div><span class="qs-status-dot"></span><strong>{status}</strong></div>
+          <span>{primary_count} quotation(s)</span>
+          <span>{secondary}</span>
+          <span>{criteria_count} criteria</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -352,13 +405,14 @@ def main():
     _render_hero()
 
     with st.sidebar:
-        st.markdown('<div class="qs-sidebar-title">Analysis workspace</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qs-sidebar-brand"><span class="qs-sidebar-mark">$</span><div><strong>QUOTESENSE</strong><small>PROCUREMENT INTELLIGENCE</small></div></div>', unsafe_allow_html=True)
+        st.markdown('<div class="qs-sidebar-title">Decision workspace</div>', unsafe_allow_html=True)
         session_chip = "<span>Session · active</span>" if session_active else ("<span>Session · required</span>" if gateway_mode else "")
         st.markdown(
             f'<div class="qs-meta-chips"><span>Provider · {session_provider or agent.llm.provider}</span><span>Model · {session_model or agent.llm.model}</span>{session_chip}</div>',
             unsafe_allow_html=True,
         )
-        st.caption("Configure the decision criteria, then upload one or more supplier quotations.")
+        st.markdown('<div class="qs-sidebar-note">Configure criteria, upload supplier quotations, then run the transparent scoring pipeline.</div>', unsafe_allow_html=True)
         query = st.text_area(
             "Analysis request",
             "Compare the quotations, explain trade-offs, identify risks, and recommend the strongest option.",
@@ -383,33 +437,47 @@ def main():
         if gateway_mode and not session_active:
             if portfolio_token:
                 st.error("The portfolio token is present, but the gateway rejected this session. Start a fresh AI session in the portfolio and launch QuoteSense again.")
-                debug = st.session_state.get("gateway_debug")
-                if debug:
-                    with st.expander("Debug: gateway response (temporary)", expanded=True):
-                        st.text_area(
-                            "Raw diagnostic (copy this)",
-                            value=(
-                                f"URL: {debug.get('url')}\n"
-                                f"Status: {debug.get('status_code')}\n"
-                                f"Server: {debug.get('server', '')}\n"
-                                f"Cache-Control: {debug.get('cache_control', '')}\n"
-                                f"CF-Cache-Status: {debug.get('cf_cache_status', '')}\n"
-                                f"Age: {debug.get('age', '')}\n"
-                                f"ETag: {debug.get('etag', '')}\n"
-                                f"Body: {debug.get('body')}"
-                            ),
-                            height=220,
-                        )
+                # debug = st.session_state.get("gateway_debug")
+                # if debug:
+                #     with st.expander("Debug: gateway response (temporary)", expanded=True):
+                #         st.text_area(
+                #             "Raw diagnostic (copy this)",
+                #             value=(
+                #                 f"URL: {debug.get('url')}\n"
+                #                 f"Status: {debug.get('status_code')}\n"
+                #                 f"Server: {debug.get('server', '')}\n"
+                #                 f"Cache-Control: {debug.get('cache_control', '')}\n"
+                #                 f"CF-Cache-Status: {debug.get('cf_cache_status', '')}\n"
+                #                 f"Age: {debug.get('age', '')}\n"
+                #                 f"ETag: {debug.get('etag', '')}\n"
+                #                 f"Body: {debug.get('body')}"
+                #             ),
+                #             height=220,
+                #         )
             else:
                 st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
             st.link_button("Open portfolio", "https://asaifali-portfolio.vercel.app", use_container_width=True)
         st.divider()
-        st.markdown('<div class="qs-sidebar-kicker">WORKFLOW</div>', unsafe_allow_html=True)
+        st.markdown('<div class="qs-sidebar-kicker">SYSTEM</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="qs-sidebar-health"><div><span class="qs-status-dot"></span> {"Gateway session active" if session_active else "Local / session ready"}</div><small>{session_provider or agent.llm.provider} · {session_model or agent.llm.model}</small><small>{len(st.session_state.get("result", {}).get("quotations", []) or []) if st.session_state.get("result") else 0} analyzed quotations</small></div>', unsafe_allow_html=True)
+        st.markdown('<div class="qs-sidebar-kicker qs-sidebar-workflow">WORKFLOW</div>', unsafe_allow_html=True)
         st.markdown('<div class="qs-side-step">01 · Extract supplier terms</div>', unsafe_allow_html=True)
         st.markdown('<div class="qs-side-step">02 · Score deterministically</div>', unsafe_allow_html=True)
         st.markdown('<div class="qs-side-step">03 · Explain risk + recommendation</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="qs-upload-label">Upload one or more supplier quotations</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="qs-upload-head">
+          <div>
+            <div class="qs-upload-kicker">SUPPLIER INPUT</div>
+            <div class="qs-upload-title">Drop supplier quotations here</div>
+            <div class="qs-upload-copy">Add one or more source files. QuoteSense will extract terms, normalize suppliers, and keep the decision logic inspectable.</div>
+          </div>
+          <div class="qs-upload-badge"><span>PDF</span><span>DOCX</span><span>TXT</span><span>XLSX</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     uploaded = st.file_uploader(
         "Supplier quotation files",
         type=[x.lstrip(".") for x in config.SUPPORTED_FORMATS],
@@ -417,6 +485,8 @@ def main():
         label_visibility="collapsed",
         help="Upload PDF, DOCX, TXT or XLSX supplier quotation files.",
     )
+
+    _render_workspace_status(uploaded, st.session_state.get("result"), len(criteria))
 
     result = st.session_state.get("result")
     _render_pipeline(bool(result))

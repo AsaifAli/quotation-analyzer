@@ -111,21 +111,6 @@ body {{ overflow-x:hidden!important; }}
 }}
 header[data-testid="stHeader"] {{ background:transparent!important; }}
 
-
-/* Keep Streamlit's native sidebar collapse/expand control usable.
-   Streamlit 1.38+ uses stSidebarCollapseButton (older releases used
-   collapsedControl). */
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stSidebarCollapseButton"] button,
-[data-testid="collapsedControl"],
-[data-testid="collapsedControl"] button {{
-  display: flex !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-  pointer-events: auto !important;
-  position: relative;
-  z-index: 100000 !important;
-}}
 [data-testid="stAppViewContainer"]>.main .block-container {{
   max-width:1500px!important;
   padding-top:1.05rem!important;
@@ -198,6 +183,23 @@ input:focus,textarea:focus,[data-baseweb="select"]>div:hover {{
 [data-testid="stFileUploaderDropzone"] button {{ background:var(--qs-surface-2)!important;color:var(--qs-text)!important;border-color:var(--qs-border)!important; }}
 [data-testid="stFileUploaderDropzone"]:hover {{ transform:translateY(-1px);border-color:var(--qs-accent)!important;box-shadow:0 14px 34px color-mix(in srgb,var(--qs-accent) 9%,transparent)!important; }}
 
+/* Criteria chips: selected values should read as deliberate inputs, not validation errors. */
+[data-baseweb="tag"] {{
+  background:color-mix(in srgb,var(--qs-accent) 13%,var(--qs-surface))!important;
+  border:1px solid color-mix(in srgb,var(--qs-accent) 28%,var(--qs-border))!important;
+  color:var(--qs-text-2)!important;
+  border-radius:9px!important;
+  box-shadow:none!important;
+}}
+[data-baseweb="tag"] span {{ color:var(--qs-text-2)!important; }}
+[data-baseweb="tag"] button {{
+  color:var(--qs-accent)!important;
+  background:transparent!important;
+  border:0!important;
+  box-shadow:none!important;
+}}
+
+
 /* Tabs / tables / expanders */
 [data-testid="stTabs"] [role="tablist"] {{ gap:.3rem;border-bottom:1px solid var(--qs-border); }}
 [data-testid="stTabs"] button {{ color:var(--qs-muted)!important;border-radius:10px 10px 0 0!important;font-weight:700!important; }}
@@ -232,6 +234,16 @@ input:focus,textarea:focus,[data-baseweb="select"]>div:hover {{
 .qs-hero-title {{ font-size:clamp(2rem,4vw,3rem);line-height:1.02;font-weight:850;letter-spacing:-.035em;color:var(--qs-text);margin:.55rem 0 .55rem; }}
 .qs-hero-sub {{ color:var(--qs-muted);font-size:1rem;max-width:960px;line-height:1.6;margin-bottom:1rem; }}
 .qs-upload-label {{ font-size:.88rem;font-weight:800;color:var(--qs-text-2);margin:.45rem 0 .45rem; }}
+
+/* Upload header */
+.qs-upload-head {{
+  display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;margin:.55rem 0 .5rem;padding:.15rem .1rem .05rem;
+}}
+.qs-upload-kicker {{ color:var(--qs-accent);font-size:.66rem;font-weight:900;letter-spacing:.15em;text-transform:uppercase; }}
+.qs-upload-title {{ color:var(--qs-text);font-size:1.02rem;font-weight:850;margin-top:.18rem; }}
+.qs-upload-copy {{ color:var(--qs-muted);font-size:.74rem;line-height:1.45;margin-top:.18rem;max-width:820px; }}
+.qs-upload-badge {{ display:flex;gap:.32rem;flex-wrap:wrap;justify-content:flex-end; }}
+.qs-upload-badge span {{ padding:.22rem .42rem;border:1px solid var(--qs-border);border-radius:999px;background:var(--qs-surface);color:var(--qs-muted);font-size:.61rem;font-weight:850;letter-spacing:.04em; }}
 
 /* Empty / ready */
 .qs-empty-card {{
@@ -293,6 +305,57 @@ input:focus,textarea:focus,[data-baseweb="select"]>div:hover {{
   [data-testid="stAppViewContainer"]>.main .block-container {{ padding-left:.9rem!important;padding-right:.9rem!important; }}
 }}
 @media (prefers-reduced-motion:reduce) {{ *,*::before,*::after {{ animation-duration:.001ms!important;transition-duration:.001ms!important; }} }}
+
+/* Sidebar control parity with the proven AI Automation implementation. */
+[data-testid="stSidebarCollapseButton"], [data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapsedControl"], [data-testid="stSidebarCollapsedControl"] button,
+[data-testid="collapsedControl"], [data-testid="collapsedControl"] button {{
+  opacity:1!important; visibility:visible!important; pointer-events:auto!important; z-index:100001!important;
+}}
+.qs-product-meta {{ display:flex; gap:.38rem; align-items:center; flex-wrap:wrap; }}
+.qs-brand-mark {{ width:34px; height:34px; border-radius:11px; display:grid; place-items:center; background:linear-gradient(135deg,var(--qs-accent),var(--qs-accent-2)); color:#fff; font-weight:900; box-shadow:0 9px 24px color-mix(in srgb,var(--qs-accent) 20%,transparent); flex:0 0 auto; }}
+.qs-mini-chip {{ padding:.22rem .48rem; border:1px solid var(--qs-border); border-radius:999px; font-size:.65rem; color:var(--qs-text-2); background:var(--qs-surface); font-weight:800; }}
+.qs-hero {{ display:grid; grid-template-columns:minmax(0,1.45fr) minmax(310px,.75fr); gap:1rem; margin:0 0 1.05rem; padding:1.15rem; border:1px solid var(--qs-border); border-radius:20px; background:linear-gradient(135deg,color-mix(in srgb,var(--qs-accent) 7%,var(--qs-surface)),var(--qs-surface)); box-shadow:0 18px 48px rgba(15,23,42,.06); }}
+.qs-hero-copy {{ padding:.35rem .35rem .25rem; }}
+.qs-hero-panel {{ border:1px solid var(--qs-border); border-radius:16px; padding:.85rem; background:var(--qs-surface); }}
+.qs-hero-panel-kicker,.qs-card-kicker {{ color:var(--qs-accent); font-size:.68rem; font-weight:900; letter-spacing:.14em; text-transform:uppercase; margin-bottom:.55rem; }}
+.qs-flow-item {{ display:flex; gap:.6rem; padding:.56rem .45rem; border-top:1px solid var(--qs-border); }}
+.qs-flow-item:first-of-type {{ border-top:0; }}
+.qs-flow-item>span {{ width:25px; height:25px; display:grid; place-items:center; border-radius:8px; background:color-mix(in srgb,var(--qs-accent) 12%,var(--qs-surface-2)); color:var(--qs-accent); font-size:.67rem; font-weight:900; }}
+.qs-flow-item strong {{ display:block; color:var(--qs-text); font-size:.8rem; }}
+.qs-flow-item small {{ display:block; color:var(--qs-muted); font-size:.68rem; margin-top:.1rem; line-height:1.4; }}
+.qs-hero-chips {{ display:flex; gap:.4rem; flex-wrap:wrap; margin-top:.85rem; }}
+.qs-hero-chips span {{ padding:.3rem .55rem; border:1px solid var(--qs-border); border-radius:999px; background:var(--qs-surface); color:var(--qs-text-2); font-size:.68rem; font-weight:800; }}
+.qs-ready-grid {{ display:grid; grid-template-columns:2fr 1fr 1fr; gap:.75rem; margin:.2rem 0 1rem; }}
+.qs-ready-card {{ min-height:116px; padding:.95rem 1rem; border:1px solid var(--qs-border); border-radius:16px; background:var(--qs-surface); box-shadow:0 10px 28px rgba(15,23,42,.045); }}
+.qs-ready-card.main {{ background:linear-gradient(135deg,color-mix(in srgb,var(--qs-accent) 8%,var(--qs-surface)),var(--qs-surface)); }}
+.qs-ready-card strong {{ display:block; color:var(--qs-text); font-size:.86rem; }}
+.qs-ready-card small {{ display:block; color:var(--qs-muted); line-height:1.45; margin-top:.3rem; font-size:.72rem; }}
+.qs-workspace-strip {{ display:flex; align-items:center; gap:.6rem; flex-wrap:wrap; margin:.1rem 0 .8rem; padding:.62rem .78rem; border:1px solid var(--qs-border); border-radius:13px; background:var(--qs-surface); box-shadow:0 7px 20px rgba(15,23,42,.035); }}
+.qs-workspace-strip>div {{ display:flex; align-items:center; gap:.38rem; margin-right:auto; }}
+.qs-workspace-strip>span {{ color:var(--qs-muted); font-size:.68rem; padding:.24rem .48rem; border-radius:999px; background:var(--qs-surface-2); }}
+.qs-workspace-strip.ready {{ border-color:color-mix(in srgb,var(--qs-accent) 28%,var(--qs-border)); background:linear-gradient(90deg,color-mix(in srgb,var(--qs-accent) 4%,var(--qs-surface)),var(--qs-surface)); }}
+.qs-workspace-strip.complete {{ border-color:color-mix(in srgb,var(--qs-success) 28%,var(--qs-border)); background:linear-gradient(90deg,color-mix(in srgb,var(--qs-success) 4%,var(--qs-surface)),var(--qs-surface)); }}
+.qs-workspace-strip.waiting {{ border-color:var(--qs-border); }}
+.qs-status-dot {{ width:7px; height:7px; border-radius:999px; display:inline-block; background:var(--qs-success); box-shadow:0 0 0 4px color-mix(in srgb,var(--qs-success) 10%,transparent); }}
+.qs-workspace-strip.ready .qs-status-dot {{ background:var(--qs-accent); box-shadow:0 0 0 4px color-mix(in srgb,var(--qs-accent) 10%,transparent); }}
+.qs-sidebar-brand {{ display:flex; align-items:center; gap:.62rem; padding:.25rem 0 1rem; }}
+.qs-sidebar-mark {{ width:34px; height:34px; display:grid; place-items:center; border-radius:11px; background:linear-gradient(135deg,var(--qs-accent),var(--qs-accent-2)); color:#fff; font-weight:900; box-shadow:0 8px 22px color-mix(in srgb,var(--qs-accent) 20%,transparent); }}
+.qs-sidebar-brand strong {{ display:block; color:var(--qs-text); font-size:.78rem; letter-spacing:.08em; }}
+.qs-sidebar-brand small {{ display:block; color:var(--qs-muted); font-size:.58rem; letter-spacing:.1em; margin-top:.08rem; }}
+.qs-sidebar-note {{ color:var(--qs-muted); font-size:.72rem; line-height:1.5; margin-bottom:.8rem; }}
+.qs-sidebar-health {{ display:grid; gap:.28rem; padding:.7rem .75rem; border:1px solid var(--qs-border); border-radius:13px; background:var(--qs-surface); margin:.45rem 0 .85rem; }}
+.qs-sidebar-health div {{ display:flex; align-items:center; gap:.35rem; color:var(--qs-text-2); font-size:.72rem; font-weight:800; }}
+.qs-sidebar-health small {{ color:var(--qs-muted); font-size:.62rem; }}
+.qs-sidebar-workflow {{ margin-top:.3rem; }}
+.qs-section-spaced {{ margin-top:.9rem; }}
+.qs-risk-card {{ border:1px solid var(--qs-border); border-radius:15px; padding:.85rem 1rem; background:var(--qs-surface); margin:.55rem 0; }}
+.qs-risk-card.danger {{ border-color:color-mix(in srgb,var(--qs-danger) 26%,var(--qs-border)); background:color-mix(in srgb,var(--qs-danger) 4%,var(--qs-surface)); }}
+.qs-risk-card.warn {{ border-color:color-mix(in srgb,var(--qs-warning) 28%,var(--qs-border)); background:color-mix(in srgb,var(--qs-warning) 4%,var(--qs-surface)); }}
+.qs-risk-top {{ display:flex; justify-content:space-between; gap:1rem; color:var(--qs-text); }}
+.qs-risk-top span {{ color:var(--qs-warning); font-size:.67rem; font-weight:900; letter-spacing:.08em; }}
+.qs-risk-card ul {{ margin:.4rem 0 0 1rem; color:var(--qs-text-2); }}
+@media (max-width: 900px) {{ .qs-hero,.qs-ready-grid {{ grid-template-columns:1fr; }} .qs-product-meta {{ display:none; }} .qs-upload-head {{ align-items:flex-start; flex-direction:column; }} .qs-upload-badge {{ justify-content:flex-start; }} }}
 </style>
 """
     st.markdown(css, unsafe_allow_html=True)
