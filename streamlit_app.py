@@ -61,17 +61,17 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
             headers={"Authorization": f"Bearer {token}", "Cache-Control": "no-cache", "Pragma": "no-cache"},
             timeout=5,
         )
-        # # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
-        # st.session_state["gateway_debug"] = {
-        #     "url": url,
-        #     "status_code": r.status_code,
-        #     "body": r.text or "(empty body)",
-        #     "cache_control": r.headers.get("Cache-Control", "(none)"),
-        #     "cf_cache_status": r.headers.get("CF-Cache-Status", "(none)"),
-        #     "age": r.headers.get("Age", "(none)"),
-        #     "etag": r.headers.get("ETag", "(none)"),
-        #     "server": r.headers.get("Server", "(none)"),
-        # }
+        # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
+        st.session_state["gateway_debug"] = {
+            "url": url,
+            "status_code": r.status_code,
+            "body": r.text or "(empty body)",
+            "cache_control": r.headers.get("Cache-Control", "(none)"),
+            "cf_cache_status": r.headers.get("CF-Cache-Status", "(none)"),
+            "age": r.headers.get("Age", "(none)"),
+            "etag": r.headers.get("ETag", "(none)"),
+            "server": r.headers.get("Server", "(none)"),
+        }
         if r.ok:
             data = r.json()
             st.session_state["gateway_status"] = True
@@ -84,7 +84,7 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
         return False, {}
     except requests.RequestException as exc:
         # TEMPORARY DEBUG: capture the raw exception for on-screen diagnosis.
-        # st.session_state["gateway_debug"] = {"url": url, "status_code": None, "body": f"{type(exc).__name__}: {exc}"}
+        st.session_state["gateway_debug"] = {"url": url, "status_code": None, "body": f"{type(exc).__name__}: {exc}"}
         # Keep the local token available if the status endpoint is temporarily unavailable.
         # The actual completion request remains authoritative.
         st.session_state["gateway_status"] = bool(token)
@@ -318,22 +318,122 @@ def _render_supplier_snapshot(result: dict) -> None:
         )
     if not rows:
         return
-    st.markdown('<div class="qs-section-kicker">DECISION SNAPSHOT</div>', unsafe_allow_html=True)
-    left, right = st.columns([1.35, 1], gap="large")
-    with left:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    with right:
-        df = pd.DataFrame([{"Supplier": x["supplier"], "Score": x.get("score") or 0} for x in scores])
-        fig = px.bar(df, x="Supplier", y="Score", range_y=[0, 100], title="Deterministic procurement score")
-        fig.update_layout(
-            margin=dict(l=8, r=8, t=42, b=8),
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            font=dict(size=12),
-        )
-        fig.update_traces(marker_line_width=0)
-        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.markdown('<div class="qs-section-kicker">SUPPLIER COMPARISON</div>', unsafe_allow_html=True)
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
+
+def _decision_confidence(result: dict) -> tuple[str, str]:
+    quotes = result.get("quotations", []) or []
+    validation = result.get("validation", []) or []
+    if isinstance(validation, dict):
+        validation = validation.get("validation", []) or []
+    if not quotes:
+        return "Low", "No quotations are available."
+    avg = sum(float(v.get("completeness_score", 0) or 0) for v in validation) / len(validation) if validation else 0
+    missing = sum(len(v.get("missing_fields", []) or []) for v in validation) if validation else 0
+    if len(quotes) >= 3 and avg >= 90 and missing <= 2:
+        return "High", "Multiple quotations with strong extracted coverage."
+    if len(quotes) >= 2 and avg >= 80 and missing <= 5:
+        return "High", "Comparable supplier evidence with good extracted coverage."
+    if avg >= 80 and missing <= 4:
+        return "Moderate", "Evidence is reasonably complete, but the comparison set is limited."
+    return "Low", "Material information is missing or the comparison set is too small."
+
+
+def _render_decision_cockpit(result: dict) -> None:
+    scores = result.get("scores", []) or []
+    quotes = result.get("quotations", []) or []
+    risks = result.get("risks", []) or []
+    rec = (result.get("recommendation", {}) or {}).get("recommendations", {}) or {}
+    primary = rec.get("primary_recommendation", {}) or {}
+    best = _top_score(scores)
+    supplier = str(primary.get("supplier") or (best or {}).get("supplier") or "No recommendation")
+    score = _safe_score((best or {}).get("score"))
+    reason = str(primary.get("reason") or "The recommendation is based on the deterministic supplier ranking and extracted evidence.")
+    confidence, confidence_reason = _decision_confidence(result)
+    risk_count = sum(len(r.get("items", []) or []) for r in risks if isinstance(r, dict))
+    if not risk_count and risks:
+        risk_count = len(risks)
+    score_label = f"{score:.1f} / 100" if score is not None else "Not scored"
+    score_tone = "good" if score is not None and score >= 85 else ("warn" if score is not None and score >= 70 else "neutral")
+    confidence_class = "good" if confidence == "High" else ("warn" if confidence == "Moderate" else "danger")
+
+    components = []
+    if best:
+        component_map = [
+            ("Cost", best.get("cost_score")),
+            ("Completeness", best.get("completeness_score")),
+            ("Timeline", best.get("timeline_score")),
+            ("Terms", best.get("terms_score")),
+            ("Risk", best.get("risk_score")),
+        ]
+        for label, value in component_map:
+            val = _safe_score(value)
+            if val is not None:
+                components.append((label, val))
+    strong = sorted(components, key=lambda x: x[1], reverse=True)[:3]
+    strengths_html = "".join(
+        f'<span class="qs-reason-chip"><span>✓</span>{html.escape(label)} {value:.0f}</span>'
+        for label, value in strong
+    )
+    risk_html = (
+        '<span class="qs-risk-count">✓ No material risks surfaced</span>'
+        if not risk_count
+        else f'<span class="qs-risk-count danger">⚠ {risk_count} risk item(s) require review</span>'
+    )
+
+    st.markdown(
+        f"""
+        <div class="qs-decision-hero">
+          <div class="qs-decision-main">
+            <div class="qs-reco-kicker">RECOMMENDED SUPPLIER</div>
+            <div class="qs-decision-supplier">🥇 {html.escape(supplier)}</div>
+            <div class="qs-decision-reason">{html.escape(reason)}</div>
+            <div class="qs-reason-row">{strengths_html}</div>
+          </div>
+          <div class="qs-score-panel {score_tone}">
+            <div class="qs-score-label">DETERMINISTIC SCORE</div>
+            <div class="qs-score-value">{score_label}</div>
+            <div class="qs-score-sub">Numeric ranking is calculated from the configured criteria.</div>
+          </div>
+        </div>
+        <div class="qs-decision-meta-grid">
+          <div class="qs-decision-meta-card {confidence_class}"><span>DECISION CONFIDENCE</span><strong>{confidence}</strong><small>{html.escape(confidence_reason)}</small></div>
+          <div class="qs-decision-meta-card"><span>SUPPLIER SET</span><strong>{len(quotes)}</strong><small>quotation(s) compared</small></div>
+          <div class="qs-decision-meta-card {'danger' if risk_count else 'good'}"><span>RISK REVIEW</span><strong>{risk_count}</strong><small>{'item(s) require review' if risk_count else 'no material risks surfaced'}</small></div>
+          <div class="qs-decision-meta-card"><span>SOURCE COVERAGE</span><strong>{len(result.get('documents', []) or [])}</strong><small>source file(s) analyzed</small></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="qs-section-kicker qs-section-spaced">SCORING BREAKDOWN</div>', unsafe_allow_html=True)
+    weights = (best or {}).get("weights") or result.get("weights") or {}
+    if best and components:
+        cols = st.columns(len(components), gap="small")
+        for col, (label, value) in zip(cols, components):
+            weight = float(weights.get(label.lower(), 0) or 0)
+            with col:
+                st.markdown(
+                    f"""<div class="qs-score-breakdown">
+                      <div class="qs-score-breakdown-top"><strong>{html.escape(label)}</strong><span>{value:.0f}</span></div>
+                      <div class="qs-score-track"><span style="width:{max(0,min(100,value)):.1f}%"></span></div>
+                      <small>{weight*100:.0f}% weight · contribution {value*weight:.1f}</small>
+                    </div>""",
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown('<div class="qs-section-kicker qs-section-spaced">WHY THIS SUPPLIER WON</div>', unsafe_allow_html=True)
+    reason_cols = st.columns(3, gap="small")
+    for col, (label, value) in zip(reason_cols, strong):
+        with col:
+            st.markdown(
+                f"""<div class="qs-why-card"><span>✓</span><strong>{html.escape(label)}</strong><small>Deterministic component score: {value:.0f}/100.</small></div>""",
+                unsafe_allow_html=True,
+            )
+    if not strong:
+        st.caption("The available result does not contain component-level scoring details.")
+    st.markdown(f'<div class="qs-risk-inline">{risk_html}</div>', unsafe_allow_html=True)
 
 def _render_recommendation(result: dict) -> None:
     rec = (result.get("recommendation", {}) or {}).get("recommendations", {}) or {}
@@ -437,23 +537,23 @@ def main():
         if gateway_mode and not session_active:
             if portfolio_token:
                 st.error("The portfolio token is present, but the gateway rejected this session. Start a fresh AI session in the portfolio and launch QuoteSense again.")
-                # debug = st.session_state.get("gateway_debug")
-                # if debug:
-                #     with st.expander("Debug: gateway response (temporary)", expanded=True):
-                #         st.text_area(
-                #             "Raw diagnostic (copy this)",
-                #             value=(
-                #                 f"URL: {debug.get('url')}\n"
-                #                 f"Status: {debug.get('status_code')}\n"
-                #                 f"Server: {debug.get('server', '')}\n"
-                #                 f"Cache-Control: {debug.get('cache_control', '')}\n"
-                #                 f"CF-Cache-Status: {debug.get('cf_cache_status', '')}\n"
-                #                 f"Age: {debug.get('age', '')}\n"
-                #                 f"ETag: {debug.get('etag', '')}\n"
-                #                 f"Body: {debug.get('body')}"
-                #             ),
-                #             height=220,
-                #         )
+                debug = st.session_state.get("gateway_debug")
+                if debug:
+                    with st.expander("Debug: gateway response (temporary)", expanded=True):
+                        st.text_area(
+                            "Raw diagnostic (copy this)",
+                            value=(
+                                f"URL: {debug.get('url')}\n"
+                                f"Status: {debug.get('status_code')}\n"
+                                f"Server: {debug.get('server', '')}\n"
+                                f"Cache-Control: {debug.get('cache_control', '')}\n"
+                                f"CF-Cache-Status: {debug.get('cf_cache_status', '')}\n"
+                                f"Age: {debug.get('age', '')}\n"
+                                f"ETag: {debug.get('etag', '')}\n"
+                                f"Body: {debug.get('body')}"
+                            ),
+                            height=220,
+                        )
             else:
                 st.warning("Portfolio AI session required. Launch QuoteSense from your portfolio to enable analysis.")
             st.link_button("Open portfolio", "https://asaifali-portfolio.vercel.app", use_container_width=True)
@@ -553,12 +653,13 @@ def main():
     if not result:
         return
 
-    st.markdown('<div class="qs-results-title">Analysis results</div>', unsafe_allow_html=True)
+    st.markdown('<div class="qs-results-title">Decision cockpit</div>', unsafe_allow_html=True)
     _render_summary_metrics(result)
+    _render_decision_cockpit(result)
     _render_supplier_snapshot(result)
 
     tabs = st.tabs([
-        "Overview",
+        "Decision Overview",
         "Quotations",
         "Scoring",
         "Risks & Validation",
