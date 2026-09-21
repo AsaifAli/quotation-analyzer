@@ -29,3 +29,11 @@ services:
         value: "2"
       - key: OLLAMA_ENABLED
         value: "false"
+
+  - type: web
+    name: quotesense-harness
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    autoDeploy: true
