@@ -64,14 +64,7 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
         )
         # TEMPORARY DEBUG: capture the raw gateway response for on-screen diagnosis.
         st.session_state["gateway_debug"] = {
-            "url": url,
-            "status_code": r.status_code,
-            "body": r.text or "(empty body)",
-            "cache_control": r.headers.get("Cache-Control", "(none)"),
-            "cf_cache_status": r.headers.get("CF-Cache-Status", "(none)"),
-            "age": r.headers.get("Age", "(none)"),
-            "etag": r.headers.get("ETag", "(none)"),
-            "server": r.headers.get("Server", "(none)"),
+        "status_code": r.status_code,
         }
         if r.ok:
             data = r.json()
@@ -85,7 +78,9 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
         return False, {}
     except requests.RequestException as exc:
         # TEMPORARY DEBUG: capture the raw exception for on-screen diagnosis.
-        st.session_state["gateway_debug"] = {"url": url, "status_code": None, "body": f"{type(exc).__name__}: {exc}"}
+        st.session_state["gateway_debug"] = {
+        "status_code": None,
+        }
         # Keep the local token available if the status endpoint is temporarily unavailable.
         # The actual completion request remains authoritative.
         st.session_state["gateway_status"] = bool(token)
@@ -292,7 +287,7 @@ def _render_summary_metrics(result: dict) -> None:
                 <div class="qs-metric {tone}">
                   <div class="qs-metric-value">{value}</div>
                   <div class="qs-metric-label">{label}</div>
-                  <div class="qs-metric-sub">{sub}</div>
+                  <div class="qs-metric-sub">{html.escape(str(sub))}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -441,11 +436,18 @@ def _render_decision_cockpit(result: dict) -> None:
 def _render_recommendation(result: dict) -> None:
     rec = (result.get("recommendation", {}) or {}).get("recommendations", {}) or {}
     primary = rec.get("primary_recommendation", {}) or {}
+
     if not primary:
         st.info("No qualitative recommendation was requested or generated.")
         return
-    supplier = primary.get("supplier") or "Recommended supplier"
-    reason = primary.get("reason") or "Recommendation details are available below."
+
+    supplier = html.escape(
+        str(primary.get("supplier") or "Recommended supplier")
+    )
+    reason = html.escape(
+        str(primary.get("reason") or "Recommendation details are available below.")
+    )
+
     st.markdown(
         f"""
         <div class="qs-recommendation-card">
@@ -457,6 +459,7 @@ def _render_recommendation(result: dict) -> None:
         """,
         unsafe_allow_html=True,
     )
+
     with st.expander("Why this supplier?", expanded=True):
         st.json(rec)
 
@@ -464,10 +467,17 @@ def _render_recommendation(result: dict) -> None:
 def _render_risks(result: dict) -> None:
     risks = result.get("risks", []) or []
     validation = result.get("validation", []) or []
+
     if not risks:
         st.markdown(
             """
-            <div class="qs-success-card"><span>✓</span><div><strong>No material risks surfaced.</strong><div>Validation data is still available below for inspection.</div></div></div>
+            <div class="qs-success-card">
+              <span>✓</span>
+              <div>
+                <strong>No material risks surfaced.</strong>
+                <div>Validation data is still available below for inspection.</div>
+              </div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
@@ -475,19 +485,40 @@ def _render_risks(result: dict) -> None:
         for risk in risks:
             level = str(risk.get("level") or "medium").lower()
             tone = "danger" if level in {"critical", "high"} else "warn"
-            items = "".join(f"<li>{x}</li>" for x in (risk.get("items") or []))
+
+            supplier = html.escape(
+                str(risk.get("supplier") or "Supplier")
+            )
+            level_display = html.escape(level.upper())
+
+            items = "".join(
+                f"<li>{html.escape(str(item))}</li>"
+                for item in (risk.get("items") or [])
+            )
+
             st.markdown(
                 f"""
                 <div class="qs-risk-card {tone}">
-                  <div class="qs-risk-top"><strong>{risk.get('supplier', 'Supplier')}</strong><span>{level.upper()}</span></div>
+                  <div class="qs-risk-top">
+                    <strong>{supplier}</strong>
+                    <span>{level_display}</span>
+                  </div>
                   <ul>{items}</ul>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
+
     if validation:
-        st.markdown('<div class="qs-section-kicker qs-section-spaced">VALIDATION</div>', unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(validation), use_container_width=True, hide_index=True)
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">VALIDATION</div>',
+            unsafe_allow_html=True,
+        )
+        st.dataframe(
+            pd.DataFrame(validation),
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def _render_evidence(result: dict) -> None:

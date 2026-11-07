@@ -23,6 +23,11 @@ services:
     build: .
     restart: unless-stopped
     environment:
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN:-}
+      MAX_FILE_SIZE_MB: ${MAX_FILE_SIZE_MB:-50}
+      MAX_UPLOAD_FILES: ${MAX_UPLOAD_FILES:-5}
+      MAX_TOTAL_UPLOAD_SIZE_MB: ${MAX_TOTAL_UPLOAD_SIZE_MB:-100}
+      MAX_QUERY_CHARS: ${MAX_QUERY_CHARS:-4000}
       LLM_PROVIDER: ${LLM_PROVIDER:-litellm}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-local-dev-key}
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://litellm:4000/v1}
@@ -38,13 +43,13 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "8000:8000"
-    command: ["uvicorn","app:app","--host","0.0.0.0","--port","8000"]
+      - "127.0.0.1:8000:8000"
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
     depends_on:
       litellm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -60,9 +65,9 @@ services:
         condition: service_healthy
     ports:
       - "8501:8501"
-    command: ["streamlit","run","streamlit_app.py","--server.port","8501","--server.address","0.0.0.0","--server.headless","true"]
+    command: ["streamlit", "run", "streamlit_app.py", "--server.port", "8501", "--server.address", "0.0.0.0", "--server.headless", "true"]
     healthcheck:
-      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
       interval: 15s
       timeout: 5s
       retries: 5
