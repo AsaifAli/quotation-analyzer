@@ -2,7 +2,7 @@
 import os
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List
-import PyPDF2
+from pypdf import PdfReader
 from docx import Document
 import pandas as pd
 import config
@@ -35,7 +35,7 @@ class DocumentProcessor:
     def _pdf(self, path):
         pages, evidence = [], []; ocr_pages = 0
         with open(path, "rb") as f:
-            reader = PyPDF2.PdfReader(f)
+            reader = PdfReader(f)
             for i, page in enumerate(reader.pages, 1):
                 page_text = (page.extract_text() or "").strip(); kind = "text"
                 if not page_text and config.OCR_ENABLED:
@@ -47,7 +47,7 @@ class DocumentProcessor:
         return "\n\n".join(pages), evidence
     def _ocr_page(self, path, page_number):
         try:
-            import fitz, pytesseract
+            import pymupdf as fitz, pytesseract
             from PIL import Image
             doc = fitz.open(path); page = doc.load_page(page_number - 1)
             pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)

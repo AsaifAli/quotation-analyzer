@@ -34,6 +34,7 @@ services:
     name: quotesense-harness
     runtime: docker
     plan: free
+    dockerfilePath: ./Dockerfile.harness
     region: singapore
     healthCheckPath: /health
     autoDeploy: true

@@ -100,3 +100,47 @@ def test_gemini_schema_removes_additional_properties_at_all_levels():
     converted = _gemini_compatible_schema(schema)
     assert "additionalProperties" not in converted
     assert "additionalProperties" not in converted["properties"]["items"]["items"]
+
+
+def test_pdf_text_ingestion(tmp_path):
+    import pymupdf
+
+    path = tmp_path / "quotation.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), "Supplier: PDF Example")
+    doc.save(str(path))
+    doc.close()
+
+    result = DocumentProcessor().extract(str(path))
+    assert "PDF Example" in result["text"]
+    assert result["evidence"][0]["kind"] == "text"
+
+
+def test_scanned_pdf_ocr(tmp_path, monkeypatch):
+    import io
+    import pymupdf
+    import config
+    from PIL import Image, ImageDraw, ImageFont
+
+    monkeypatch.setattr(config, "OCR_ENABLED", True)
+
+    image = Image.new("RGB", (1600, 300), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=90)
+    draw.text((60, 90), "QUOTESENSE OCR TEST 12345", fill="black", font=font)
+
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    path = tmp_path / "scanned.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page(width=800, height=150)
+    page.insert_image(page.rect, stream=buffer.getvalue())
+    doc.save(str(path))
+    doc.close()
+
+    result = DocumentProcessor().extract(str(path))
+
+    assert "QUOTESENSE" in result["text"].upper()
+    assert result["evidence"][0]["kind"] == "ocr"
