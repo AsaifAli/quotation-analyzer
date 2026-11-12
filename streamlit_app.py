@@ -12,6 +12,7 @@ import requests
 import streamlit as st
 
 from modules.ai_agent import QuotationIntelligenceAgent
+from modules.report import analysis_json, analysis_xlsx, quotations_csv
 import config
 from ui_theme import apply_theme
 from sidebar_toggle import render_sidebar_toggle
@@ -532,6 +533,55 @@ def _render_evidence(result: dict) -> None:
         with st.expander(f"{location} · {source}", expanded=False):
             st.markdown(item.get("text", ""))
 
+def _render_export_center(result: dict) -> None:
+    st.markdown(
+        '<div class="qs-section-kicker qs-section-spaced">'
+        'EXPORT ANALYSIS'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Download the extracted supplier data, deterministic scoring, "
+        "validation results and risk findings."
+    )
+
+    excel_col, csv_col, json_col = st.columns(3, gap="small")
+
+    with excel_col:
+        st.download_button(
+            "Excel workbook",
+            data=analysis_xlsx(result),
+            file_name="quotesense-analysis.xlsx",
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            icon=":material/table_view:",
+            use_container_width=True,
+            key="qs-export-excel",
+        )
+
+    with csv_col:
+        st.download_button(
+            "Supplier CSV",
+            data=quotations_csv(result),
+            file_name="quotesense-suppliers.csv",
+            mime="text/csv",
+            icon=":material/csv:",
+            use_container_width=True,
+            key="qs-export-csv",
+        )
+
+    with json_col:
+        st.download_button(
+            "Full analysis JSON",
+            data=analysis_json(result),
+            file_name="quotesense-analysis.json",
+            mime="application/json",
+            icon=":material/data_object:",
+            use_container_width=True,
+            key="qs-export-json",
+        )
 
 def main():
     agent = get_agent(portfolio_token)
@@ -691,6 +741,7 @@ def main():
     _render_summary_metrics(result)
     _render_decision_cockpit(result)
     _render_supplier_snapshot(result)
+    _render_export_center(result)
 
     tabs = st.tabs([
         "Decision Overview",
