@@ -1,6 +1,12 @@
+import math
 import os, tempfile
 from modules.document_processor import DocumentProcessor
-from modules.scoring import validate_quotations, score_quotations
+from modules.scoring import (
+    validate_quotations,
+    score_quotations,
+    detect_price_anomalies,
+    count_risk_findings,
+)
 from modules.llm_provider import extract_json
 
 def test_text_ingestion():
@@ -144,3 +150,153 @@ def test_scanned_pdf_ocr(tmp_path, monkeypatch):
 
     assert "QUOTESENSE" in result["text"].upper()
     assert result["evidence"][0]["kind"] == "ocr"
+
+
+def test_cost_scoring_requires_matching_explicit_currency():
+    quotes = [
+        {"supplier": "A", "total_cost": 100, "currency": "USD"},
+        {"supplier": "B", "total_cost": 200, "currency": "usd"},
+    ]
+
+    scores = score_quotations(quotes)
+
+    assert all(item["cost_comparable"] for item in scores)
+    assert all(item["cost_score"] is not None for item in scores)
+    assert "USD" in scores[0]["cost_comparability_reason"]
+
+
+def test_cost_scoring_excluded_when_currency_missing():
+    quotes = [
+        {"supplier": "A", "total_cost": 100, "currency": "USD"},
+        {"supplier": "B", "total_cost": 200, "currency": None},
+    ]
+
+    scores = score_quotations(quotes)
+
+    assert all(item["cost_comparable"] is False for item in scores)
+    assert all(item["cost_score"] is None for item in scores)
+    assert "no explicit currency" in (
+        scores[0]["cost_comparability_reason"]
+    )
+
+
+def test_cost_scoring_excluded_for_mixed_currencies():
+    quotes = [
+        {"supplier": "A", "total_cost": 100, "currency": "USD"},
+        {"supplier": "B", "total_cost": 200, "currency": "INR"},
+    ]
+
+    scores = score_quotations(quotes)
+
+    assert all(item["cost_comparable"] is False for item in scores)
+    assert all(item["cost_score"] is None for item in scores)
+    assert "different currencies" in (
+        scores[0]["cost_comparability_reason"]
+    )
+
+
+def test_price_anomalies_require_comparable_currencies():
+    mixed_quotes = [
+        {"supplier": "A", "total_cost": 100, "currency": "USD"},
+        {"supplier": "B", "total_cost": 110, "currency": "USD"},
+        {"supplier": "C", "total_cost": 400, "currency": None},
+    ]
+
+    assert detect_price_anomalies(mixed_quotes) == []
+
+    comparable_quotes = [
+        {"supplier": "A", "total_cost": 100, "currency": "USD"},
+        {"supplier": "B", "total_cost": 110, "currency": "USD"},
+        {"supplier": "C", "total_cost": 400, "currency": "USD"},
+    ]
+
+    anomalies = detect_price_anomalies(comparable_quotes)
+
+    assert len(anomalies) == 1
+    assert anomalies[0]["supplier"] == "C"
+    assert anomalies[0]["direction"] == "high"
+
+
+def test_risk_counter_ignores_empty_supplier_records():
+    risks = [
+        {"supplier": "A", "items": []},
+        {"supplier": "B", "items": ["Missing warranty", "", None]},
+        {"supplier": "C", "items": "Full upfront payment"},
+    ]
+
+    assert count_risk_findings(risks) == 2
+
+
+def test_non_finite_prices_are_excluded_from_cost_scoring():
+    quotes = [
+        {"supplier": "A", "total_cost": float("nan"), "currency": "USD"},
+        {"supplier": "B", "total_cost": 100, "currency": "USD"},
+        {"supplier": "C", "total_cost": 110, "currency": "USD"},
+        {"supplier": "D", "total_cost": 400, "currency": "USD"},
+    ]
+
+    scores = score_quotations(quotes)
+    by_supplier = {item["supplier"]: item for item in scores}
+
+    assert by_supplier["A"]["total_cost"] is None
+    assert by_supplier["A"]["cost_score"] is None
+    assert by_supplier["B"]["cost_score"] == 100.0
+    assert by_supplier["D"]["cost_score"] == 0.0
+    assert all(
+        item["score"] is None or math.isfinite(item["score"])
+        for item in scores
+    )
+
+
+def test_non_finite_prices_do_not_break_price_anomaly_detection():
+    quotes = [
+        {"supplier": "A", "total_cost": float("inf"), "currency": "USD"},
+        {"supplier": "B", "total_cost": 100, "currency": "USD"},
+        {"supplier": "C", "total_cost": 110, "currency": "USD"},
+        {"supplier": "D", "total_cost": 400, "currency": "USD"},
+    ]
+
+    anomalies = detect_price_anomalies(quotes)
+
+    assert len(anomalies) == 1
+    assert anomalies[0]["supplier"] == "D"
+
+
+def test_normalize_weights_ignores_invalid_and_non_finite_overrides():
+    from modules.scoring import normalize_weights
+
+    weights = normalize_weights(
+        {
+            "cost": float("inf"),
+            "timeline": "not-a-number",
+            "risk": 0.2,
+        }
+    )
+
+    expected_total = 0.40 + 0.25 + 0.15 + 0.10 + 0.20
+    assert weights["cost"] == round(0.40 / expected_total, 6)
+    assert weights["timeline"] == round(0.15 / expected_total, 6)
+    assert weights["risk"] == round(0.20 / expected_total, 6)
+    assert abs(sum(weights.values()) - 1.0) < 1e-5
+
+
+def test_scoring_keeps_duplicate_supplier_validation_records_distinct():
+    quotes = [
+        {"supplier": "Same Supplier", "total_cost": 100, "currency": "USD"},
+        {
+            "supplier": "Same Supplier",
+            "total_cost": 200,
+            "currency": "USD",
+            "project_description": "Complete quotation",
+            "key_features": ["Feature"],
+            "terms_conditions": "Warranty included",
+            "validity_period": "30 days",
+            "delivery_timeline": "10 days",
+            "contact_info": "sales@example.com",
+        },
+    ]
+
+    scores = score_quotations(quotes)
+    completeness = sorted(item["completeness_score"] for item in scores)
+
+    assert completeness[0] < completeness[1]
