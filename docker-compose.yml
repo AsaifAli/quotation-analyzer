@@ -29,6 +29,7 @@ services:
       MAX_TOTAL_UPLOAD_SIZE_MB: ${MAX_TOTAL_UPLOAD_SIZE_MB:-100}
       MAX_QUERY_CHARS: ${MAX_QUERY_CHARS:-4000}
       LLM_PROVIDER: ${LLM_PROVIDER:-litellm}
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
       LITELLM_API_KEY: ${LITELLM_API_KEY:-local-dev-key}
       LITELLM_BASE_URL: ${LITELLM_BASE_URL:-http://litellm:4000/v1}
       LITELLM_MODEL: ${LITELLM_MODEL:-portfolio-free}
@@ -60,6 +61,8 @@ services:
     restart: unless-stopped
     environment:
       API_BASE_URL: http://api:8000
+      LLM_GATEWAY_URL: ${LLM_GATEWAY_URL:-}
+      PORTFOLIO_SESSION_GATEWAY_URL: ${PORTFOLIO_SESSION_GATEWAY_URL:-}
     depends_on:
       api:
         condition: service_healthy

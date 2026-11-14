@@ -17,7 +17,7 @@ The system deliberately separates probabilistic LLM extraction/reasoning from de
 - **Risk review:** material commercial risks are elevated into the main decision view while detailed evidence remains available.
 - **Results hierarchy:** overview and evidence come before raw/debug output.
 - **Polished procurement workspace:** criteria chips, upload zone, readiness/status strip, sidebar workflow, and theme-aware UI were refined for a professional decision-cockpit experience.
-- **Portfolio session persistence:** a portfolio-backed gateway session can be reconstructed after a browser refresh while remaining governed by the existing gateway session lifetime.
+- **One-time portfolio session handoff:** QuoteSense exchanges a short-lived launch code server-side and keeps the resulting bearer token in Streamlit session state, not in the browser URL.
 - **Working hosted sidebar:** native Streamlit collapse/reopen behavior is repaired for hosted deployments.
 
 ## Core capabilities
@@ -74,19 +74,28 @@ Human → Make the Final Decision
 
 ## Gateway session model
 
-When launched through the portfolio, QuoteSense uses a short-lived gateway session rather than embedding provider credentials in the frontend.
+When launched through the portfolio, QuoteSense receives a short-lived, single-use handoff code. It removes `portfolio_llm_handoff` from the browser URL before exchanging the code server-side. The resulting bearer token stays in Streamlit session state. The old `portfolio_llm_session` JWT query parameter is rejected.
 
 ```text
-Portfolio
-   ↓
-BYOK / session handoff
-   ↓
-Portfolio LLM Gateway
-   ↓
-QuoteSense
+Portfolio BYOK session
+        ↓
+Single-use handoff code
+        ↓
+QuoteSense server-side exchange
+        ↓
+Shared Portfolio LLM Gateway
+        ↓
+Streamlit session token
 ```
 
-The page can reconstruct the existing portfolio session after a refresh; it does not extend the session lifetime.
+Configure both variables in the QuoteSense hosting environment:
+
+```text
+LLM_GATEWAY_URL=https://<gateway-host>/v1
+PORTFOLIO_SESSION_GATEWAY_URL=https://<gateway-host>
+```
+
+`LLM_GATEWAY_URL` is the OpenAI-compatible inference and session-status base and must end in `/v1`. `PORTFOLIO_SESSION_GATEWAY_URL` is the gateway root used for code exchange. Do not point the exchange URL at local LiteLLM. If Streamlit loses its browser session state, launch QuoteSense again from the portfolio to obtain a fresh code.
 
 ## Local development
 

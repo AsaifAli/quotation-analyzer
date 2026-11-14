@@ -31,27 +31,35 @@ st.set_page_config(
 apply_theme()
 render_sidebar_toggle()
 
-# Portfolio handoff: persist the temporary gateway JWT in Streamlit session state.
-# Keep the query parameter so full-page refreshes can reconstruct the session.
+# Portfolio handoff: exchange a short-lived, single-use code server-side.
+# The resulting bearer token stays in Streamlit session state, never in the URL.
 from llm_gateway_context import set_llm_gateway_token
+from gateway_handoff import GatewayHandoffError, exchange_handoff_code
 
-_HANDOFF_PARAM = "portfolio_llm_session"
+_HANDOFF_PARAM = "portfolio_llm_handoff"
+_LEGACY_HANDOFF_PARAM = "portfolio_llm_session"
 _GATEWAY_STATUS_CACHE_SECONDS = 8
 
 
-def _clear_gateway_session() -> None:
-    """Remove an invalid portfolio token from session state and the URL."""
-    st.session_state.pop("portfolio_llm_session", None)
-    st.session_state.pop("gateway_status", None)
-    st.session_state.pop("gateway_session", None)
-    st.session_state.pop("gateway_status_checked_at", None)
+def _clear_gateway_session(*, clear_query_params: bool = True) -> None:
+    """Clear the portfolio gateway token and related cached status."""
+    for key in (
+        "portfolio_llm_session",
+        "portfolio_llm_session_expires_at",
+        "gateway_status",
+        "gateway_session",
+        "gateway_status_checked_at",
+        "gateway_debug",
+    ):
+        st.session_state.pop(key, None)
 
-    try:
-        if _HANDOFF_PARAM in st.query_params:
-            del st.query_params[_HANDOFF_PARAM]
-    except Exception:
-        # Session cleanup must still succeed if query parameters are unavailable.
-        pass
+    if clear_query_params:
+        for param in (_HANDOFF_PARAM, _LEGACY_HANDOFF_PARAM):
+            try:
+                if param in st.query_params:
+                    del st.query_params[param]
+            except Exception:
+                pass
 
     set_llm_gateway_token("")
 
@@ -134,19 +142,103 @@ def _gateway_status(token: str) -> tuple[bool, dict[str, Any]]:
         return bool(token), {}
 
 
-portfolio_token = str(
-    st.query_params.get(_HANDOFF_PARAM, "") or ""
-).strip()
+def _handle_portfolio_handoff() -> None:
+    # Clear state left by the old direct-JWT implementation.
+    # Do not delete a new one-time code from the URL here.
+    if st.session_state.get("_portfolio_handoff_protocol") != "v1":
+        _clear_gateway_session(clear_query_params=False)
+        st.session_state["_portfolio_handoff_protocol"] = "v1"
+        st.session_state.pop("gateway_handoff_error", None)
 
-if portfolio_token:
-    st.session_state["portfolio_llm_session"] = portfolio_token
+    # Never accept the old reusable JWT query parameter.
+    if _LEGACY_HANDOFF_PARAM in st.query_params:
+        _clear_gateway_session()
+        st.session_state["gateway_handoff_error"] = (
+            "This QuoteSense link uses an older session format. "
+            "Return to the portfolio, reconnect your provider, and launch again."
+        )
+        return
+
+    # No new launch code: retain the current Streamlit session if still valid.
+    if _HANDOFF_PARAM not in st.query_params:
+        token = str(
+            st.session_state.get("portfolio_llm_session", "") or ""
+        ).strip()
+
+        expiry = st.session_state.get(
+            "portfolio_llm_session_expires_at"
+        )
+
+        if token:
+            try:
+                expired = (
+                    expiry is None
+                    or time.time() >= float(expiry)
+                )
+            except (TypeError, ValueError, OverflowError):
+                expired = True
+
+            if expired:
+                _clear_gateway_session()
+                st.session_state["gateway_handoff_error"] = (
+                    "Your QuoteSense AI session has expired. "
+                    "Return to the portfolio and launch a fresh session."
+                )
+        return
+
+    code = str(
+        st.query_params.get(_HANDOFF_PARAM, "") or ""
+    ).strip()
+
+    # Remove the one-time code before performing the network exchange.
+    try:
+        del st.query_params[_HANDOFF_PARAM]
+    except Exception:
+        _clear_gateway_session(clear_query_params=False)
+        st.session_state["gateway_handoff_error"] = (
+            "The QuoteSense launch code could not be removed from the URL. "
+            "Return to the portfolio and launch again."
+        )
+        return
+
+    # A new launch invalidates any previously stored app session.
+    _clear_gateway_session(clear_query_params=False)
+    st.session_state["gateway_handoff_error"] = ""
+
+    if not code:
+        st.session_state["gateway_handoff_error"] = (
+            "The QuoteSense launch code is missing. "
+            "Return to the portfolio and launch again."
+        )
+        return
+
+    try:
+        result = exchange_handoff_code(
+            code,
+            project="quotesense",
+        )
+    except GatewayHandoffError as exc:
+        st.session_state["gateway_handoff_error"] = str(exc)
+        return
+
+    st.session_state["portfolio_llm_session"] = (
+        result["access_token"]
+    )
+
+    st.session_state["portfolio_llm_session_expires_at"] = (
+        time.time() + result["expires_in"]
+    )
+
     st.session_state.pop("gateway_status_checked_at", None)
     st.session_state.pop("gateway_status", None)
     st.session_state.pop("gateway_session", None)
+    st.session_state.pop("gateway_debug", None)
 
-    # Keep the handoff token in the URL so a browser refresh can reconstruct
-    # the same portfolio-backed session. The gateway remains authoritative
-    # via /demo/session/status and does not extend the token lifetime.
+
+_handle_portfolio_handoff()
+
+if st.session_state.get("gateway_handoff_error"):
+    st.error(st.session_state["gateway_handoff_error"])
 
 portfolio_token = str(
     st.session_state.get("portfolio_llm_session", "") or ""
