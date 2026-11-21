@@ -117,33 +117,31 @@ def _gemini_compatible_schema(schema: Optional[Dict[str, Any]]) -> Optional[Dict
 class LLMProvider:
     """Expose one provider-independent generate/generate_json interface."""
 
-    def __init__(self, provider: Optional[str] = None, gateway_token: str = ""):
-        self._active_gemini_model = None
-
-        # Resolve the gateway session BEFORE touching local provider config.
-        # A BYOK gateway session is provider-agnostic (the gateway resolves the
-        # real upstream provider/model server-side and always speaks the
-        # OpenAI-compatible wire format), so its presence must short-circuit
-        # local provider resolution entirely. Previously local provider
-        # resolution ran first and could raise (LLM_PROVIDER=auto with no
-        # local cloud key configured) or silently win the dispatch in
-        # generate() (LLM_PROVIDER=gemini/ollama), both of which caused a
-        # valid gateway token to never be used.
-        self.gateway_token = (gateway_token or "").strip() or get_llm_gateway_token()
-        self.gateway_url = config.LLM_GATEWAY_URL.strip()
-        self.use_gateway = bool(self.gateway_token and self.gateway_url)
-
-        if self.use_gateway:
-            # The gateway always exposes an OpenAI-compatible endpoint; the
-            # actual upstream provider/model is chosen server-side by the
-            # gateway session, not by local config.
-            self.provider = "openai"
-            return
+    def __init__(self, provider: Optional[str] = None,*,gateway_token: str = "",):
+        self.gateway_token= (gateway_token or get_llm_gateway_token()
+        ).strip()
 
         requested = (provider or config.LLM_PROVIDER).lower()
-        self.provider = self._resolve_provider(requested)
-        if self.provider not in {"ollama", "openai", "litellm", "gemini"}:
-            raise ValueError("LLM_PROVIDER must be auto, ollama, openai, litellm, or gemini")
+
+        # A portfolio BYOK session must use the OpenAI-compatible Gateway
+        # regardless of the project's local provider default.
+        self.provider = (
+            "openai"
+            if self.gateway_token
+            else self._resolve_provider(requested)
+        )
+
+        if self.provider not in {
+            "ollama",
+            "openai",
+            "litellm",
+            "gemini",
+        }:
+            raise ValueError(
+                "LLM_PROVIDER must be auto, ollama, openai, litellm, or gemini"
+            )
+
+        self._active_gemini_model = None
 
     def _resolve_provider(self, requested: str) -> str:
         if requested != "auto":
@@ -174,6 +172,10 @@ class LLMProvider:
         last = None
         for attempt in range(config.LLM_MAX_RETRIES + 1):
             try:
+                if self.gateway_token or get_llm_gateway_token():
+                    return self._openai(
+                        prompt, system, temperature, schema
+                    )
                 if self.use_gateway:
                     return self._openai(prompt, system, temperature, schema)
                 if self.provider == "ollama":
@@ -220,16 +222,26 @@ class LLMProvider:
 
     def _openai(self, prompt: str, system: str, temperature: float,
                 schema: Optional[Dict[str, Any]]) -> str:
-        gateway_token = self.gateway_token or get_llm_gateway_token()
-        gateway_url = config.LLM_GATEWAY_URL.strip()
-        if gateway_token and gateway_url:
+        gateway_token = (self.gateway_token or get_llm_gateway_token()).strip()
+
+        gateway_url = (config.LLM_GATEWAY_URL or config.LLM_BASE_URL).strip()
+
+        if gateway_token:
+            if not gateway_url:
+                raise RuntimeError(
+                    "A portfolio Gateway session is active, "
+                    "but LLM_GATEWAY_URL is not configured."
+                )
+
             api_key = gateway_token
             base_url = gateway_url
-            effective_model = None  # gateway session owns the selected model
+            effective_model = None
+
         elif self.provider == "litellm":
             api_key = config.LITELLM_API_KEY
             base_url = config.LITELLM_BASE_URL
             effective_model = self.model
+
         else:
             api_key = config.OPENAI_API_KEY
             base_url = config.OPENAI_BASE_URL
