@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import config
+from harness_telemetry import record_event
 
 from .document_processor import DocumentProcessor
 from .llm_provider import LLMProvider
@@ -133,6 +134,53 @@ class QuotationIntelligenceAgent:
         )
 
     def process_documents(
+        self,
+        document_paths: List[str],
+        query="Analyze quotations",
+        criteria=None,
+        weights=None,
+        preferences=None,
+        do_market=False,
+        analyze=True,
+    ):
+        started = time.perf_counter()
+        try:
+            result = self._process_documents(
+                document_paths,
+                query=query,
+                criteria=criteria,
+                weights=weights,
+                preferences=preferences,
+                do_market=do_market,
+                analyze=analyze,
+            )
+        except Exception:
+            record_event(
+                event_type="run.failed",
+                status="failed",
+                workflow="quotation_analysis",
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+            raise
+
+        result_metrics = result.get("metrics") or {}
+        completed = result.get("status") == "success"
+        record_event(
+            event_type="run.completed" if completed else "run.failed",
+            status="success" if completed else "warning",
+            workflow="quotation_analysis",
+            duration_ms=(time.perf_counter() - started) * 1000,
+            model=result.get("model") or result_metrics.get("llm_model"),
+            metrics={
+                "document_count": int(result_metrics.get("document_count") or 0),
+                "quotation_count": int(result_metrics.get("quotation_count") or 0),
+                "risk_count": len(result.get("risks") or []),
+                "price_anomaly_count": len(result.get("price_anomalies") or []),
+            },
+        )
+        return result
+
+    def _process_documents(
         self,
         document_paths: List[str],
         query="Analyze quotations",
