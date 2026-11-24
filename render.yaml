@@ -29,12 +29,7 @@ services:
         value: "2"
       - key: OLLAMA_ENABLED
         value: "false"
-
-  - type: web
-    name: quotesense-harness
-    runtime: docker
-    plan: free
-    dockerfilePath: ./Dockerfile.harness
-    region: singapore
-    healthCheckPath: /health
-    autoDeploy: true
+      - key: EVALUATION_HARNESS_URL
+        value: https://ai-engineering-evaluation-harness.onrender.com
+      - key: EVALUATION_HARNESS_INGEST_TOKEN
+        sync: false
