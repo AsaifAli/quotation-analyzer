@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 from modules.ai_agent import QuotationIntelligenceAgent
@@ -35,7 +33,6 @@ def test_completed_analysis_reports_only_bounded_metrics(monkeypatch):
     assert returned is result
     assert len(events) == 1
     event = events[0]
-    assert event["project"] if "project" in event else True
     assert event["event_type"] == "run.completed"
     assert event["status"] == "success"
     assert event["workflow"] == "quotation_analysis"
