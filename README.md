@@ -104,3 +104,15 @@ Use the repository's Docker Compose or documented API/UI startup path. The proje
 ## Portfolio positioning
 
 **Procurement decision intelligence** — explainable extraction, deterministic ranking, evidence traceability, and human-reviewed recommendations.
+
+
+## Internal engineering assurance
+
+QuoteSense reports a small, content-free event after its existing document-analysis pipeline completes or fails. The event contains only document/quotation counts, risk/anomaly counts, duration and an optional model label. Uploaded documents, extracted quotation fields, supplier names, prompts and model responses are never sent to the evaluation service.
+
+Configure these server-side environment variables on the QuoteSense deployment:
+
+- `EVALUATION_HARNESS_URL=https://ai-engineering-evaluation-harness.onrender.com`
+- `EVALUATION_HARNESS_INGEST_TOKEN` — the QuoteSense-specific token configured by the harness operator.
+
+Telemetry is best-effort. If the URL or token is missing, or the service is unavailable, QuoteSense continues its normal workflow without blocking the user. The website links to the shared read-only engineering assurance dashboard; this app does not expose a separate harness dashboard or request an additional provider key.
