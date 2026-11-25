@@ -15,8 +15,8 @@ This is a source/configuration assessment, not a production certification. Runti
 ## Required before production
 1. Replace the CORS origin in `render.yaml` with the actual production UI origin(s).
 2. Configure unique high-entropy `API_AUTH_TOKEN` and provider keys in the hosting secret manager; rotate any exposed values.
-3. Add server-side MIME/magic-byte validation for PDF, DOCX and XLSX. Extension and size checks are insufficient.
-4. Add distributed rate limiting to expensive analysis endpoints (gateway limits do not protect every API path).
+3. Add malware scanning or isolated document parsing if the app is exposed to untrusted public uploads; signature/archive checks do not replace content scanning.
+4. Add shared ingress/WAF rate limits for multi-instance deployments. The app-level limiter is process-local and does not coordinate replicas.
 5. Restrict all URL-fetching integrations to configured HTTPS destinations; do not accept user-controlled URLs without SSRF protections.
 6. Verify logs and error trackers do not capture uploads, extracted supplier fields, credentials or bearer tokens.
 7. Run dependency scanning on the resolved deployment dependency set and patch high/critical findings.
