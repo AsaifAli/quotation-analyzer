@@ -31,7 +31,7 @@ This is a source/configuration assessment, not a production certification. Runti
 |04|File upload|PARTIAL — extension/size and PDF/Office container signatures are validated; MIME sniffing/antivirus and deeper archive policy remain external hardening|
 |05|SSRF|PARTIAL — configured provider URLs are server-side; audit all URL-capable tools|
 |06|BOLA/IDOR|N/A — no multi-user object API identified|
-|07|Rate limiting|PARTIAL — shared gateway has limits; this API needs edge/distributed limits|
+|07|Rate limiting|PARTIAL — app-level per-IP and API-token-fingerprint limits are implemented; add shared ingress/WAF limits when scaled across instances|
 |08|Password hashing|N/A — no local passwords|
 |09|MFA|EXTERNAL — enable MFA on hosting/source-control/provider admin accounts|
 |10|Server-side permissions|PARTIAL — bearer auth on analysis endpoints; no app roles|
