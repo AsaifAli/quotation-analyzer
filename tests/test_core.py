@@ -300,3 +300,61 @@ def test_scoring_keeps_duplicate_supplier_validation_records_distinct():
     completeness = sorted(item["completeness_score"] for item in scores)
 
     assert completeness[0] < completeness[1]
+
+
+def test_upload_validation_rejects_mislabeled_pdf(tmp_path):
+    path = tmp_path / "not-a-pdf.pdf"
+    path.write_text("this is a text file", encoding="utf-8")
+
+    import pytest
+    with pytest.raises(ValueError, match="do not match PDF"):
+        DocumentProcessor().validate_file(str(path))
+
+
+def test_upload_validation_rejects_malformed_docx_archive(tmp_path):
+    import zipfile
+    import pytest
+
+    path = tmp_path / "not-a-docx.docx"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("not-word-document.xml", "<document/>")
+
+    with pytest.raises(ValueError, match="do not match DOCX"):
+        DocumentProcessor().validate_file(str(path))
+
+
+def test_upload_validation_accepts_valid_pdf_and_text_files(tmp_path):
+    import pymupdf
+
+    pdf_path = tmp_path / "quotation.pdf"
+    doc = pymupdf.open()
+    doc.new_page()
+    doc.save(str(pdf_path))
+    doc.close()
+
+    txt_path = tmp_path / "quotation.txt"
+    txt_path.write_text("Supplier: Example", encoding="utf-8")
+
+    processor = DocumentProcessor()
+    processor.validate_file(str(pdf_path))
+    processor.validate_file(str(txt_path))
+
+
+def test_upload_validation_accepts_valid_docx_and_xlsx(tmp_path):
+    from docx import Document
+    import pandas as pd
+
+    docx_path = tmp_path / "quotation.docx"
+    document = Document()
+    document.add_paragraph("Supplier: Example")
+    document.save(str(docx_path))
+
+    xlsx_path = tmp_path / "quotation.xlsx"
+    pd.DataFrame([{"supplier": "Example", "cost": 100}]).to_excel(
+        xlsx_path, index=False
+    )
+
+    processor = DocumentProcessor()
+    processor.validate_file(str(docx_path))
+    processor.validate_file(str(xlsx_path))
