@@ -17,6 +17,8 @@ services:
         value: openai
       - key: LLM_GATEWAY_URL
         value: https://portfolio-llm-gateway.onrender.com/v1
+      - key: PORTFOLIO_SESSION_GATEWAY_ALLOWED_HOSTS
+        value: portfolio-llm-gateway.onrender.com
       - key: OPENAI_BASE_URL
         value: https://openrouter.ai/api/v1
       - key: OPENAI_API_KEY
