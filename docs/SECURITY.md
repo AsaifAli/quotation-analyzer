@@ -4,7 +4,7 @@ This is a source/configuration assessment, not a production certification. Runti
 
 ## Present controls
 - Bearer auth is enforced for analysis routes in `api_security.py`; an unset token fails closed.
-- `app.py` checks auth before multipart parsing and bounds upload request bytes.
+- `app.py` checks auth before multipart parsing, bounds upload request bytes, and applies per-IP plus API-token-fingerprint sliding-window quotas to protected analysis requests (`api_rate_limit.py`).
 - `modules/document_processor.py` checks file extension and size.
 - Extraction prompts treat supplier documents as untrusted data (`config.py`).
 - CORS is configurable; Render blueprint no longer uses wildcard CORS.
@@ -15,8 +15,8 @@ This is a source/configuration assessment, not a production certification. Runti
 ## Required before production
 1. Replace the CORS origin in `render.yaml` with the actual production UI origin(s).
 2. Configure unique high-entropy `API_AUTH_TOKEN` and provider keys in the hosting secret manager; rotate any exposed values.
-3. Add server-side MIME/magic-byte validation for PDF, DOCX and XLSX. Extension and size checks are insufficient.
-4. Add distributed rate limiting to expensive analysis endpoints (gateway limits do not protect every API path).
+3. Add malware scanning or isolated document parsing if the app is exposed to untrusted public uploads; signature/archive checks do not replace content scanning.
+4. Add shared ingress/WAF rate limits for multi-instance deployments. The app-level limiter is process-local and does not coordinate replicas.
 5. Restrict all URL-fetching integrations to configured HTTPS destinations; do not accept user-controlled URLs without SSRF protections.
 6. Verify logs and error trackers do not capture uploads, extracted supplier fields, credentials or bearer tokens.
 7. Run dependency scanning on the resolved deployment dependency set and patch high/critical findings.
@@ -31,7 +31,7 @@ This is a source/configuration assessment, not a production certification. Runti
 |04|File upload|PARTIAL — extension/size and PDF/Office container signatures are validated; MIME sniffing/antivirus and deeper archive policy remain external hardening|
 |05|SSRF|PARTIAL — configured provider URLs are server-side; audit all URL-capable tools|
 |06|BOLA/IDOR|N/A — no multi-user object API identified|
-|07|Rate limiting|PARTIAL — shared gateway has limits; this API needs edge/distributed limits|
+|07|Rate limiting|PARTIAL — app-level per-IP and API-token-fingerprint limits are implemented; add shared ingress/WAF limits when scaled across instances|
 |08|Password hashing|N/A — no local passwords|
 |09|MFA|EXTERNAL — enable MFA on hosting/source-control/provider admin accounts|
 |10|Server-side permissions|PARTIAL — bearer auth on analysis endpoints; no app roles|
@@ -40,7 +40,7 @@ This is a source/configuration assessment, not a production certification. Runti
 |13|Server-side API keys|PRESENT — Render env vars; never move private keys to frontend variables|
 |14|Zero localStorage tokens|PARTIAL — gateway bearer held in server-side Streamlit state; verify browser storage|
 |15|No default credentials|PARTIAL — no default login found; deployment tokens must be unique|
-|16|Strict CORS|PATCHED CONFIG — explicit origin placeholder; replace with real origin|
+|16|Strict CORS|PATCHED — explicit `https://studio.asaifali-studio.workers.dev` origin in Render blueprint; synchronize if the production website hostname changes|
 |17|Webhook signatures|N/A — no webhook receiver identified|
 |18|Source maps|N/A — no browser JS build pipeline identified|
 |19|Clean production logs|VERIFY — inspect runtime logs/error tracking for document/credential leakage|
