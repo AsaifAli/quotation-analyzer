@@ -4,7 +4,7 @@ This is a source/configuration assessment, not a production certification. Runti
 
 ## Present controls
 - Bearer auth is enforced for analysis routes in `api_security.py`; an unset token fails closed.
-- `app.py` checks auth before multipart parsing and bounds upload request bytes.
+- `app.py` checks auth before multipart parsing, bounds upload request bytes, and applies per-IP plus API-token-fingerprint sliding-window quotas to protected analysis requests (`api_rate_limit.py`).
 - `modules/document_processor.py` checks file extension and size.
 - Extraction prompts treat supplier documents as untrusted data (`config.py`).
 - CORS is configurable; Render blueprint no longer uses wildcard CORS.
