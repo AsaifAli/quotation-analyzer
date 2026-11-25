@@ -28,7 +28,7 @@ This is a source/configuration assessment, not a production certification. Runti
 |01|SQL injection|N/A — no app SQL database identified|
 |02|XSS|PARTIAL — review all Streamlit Markdown/HTML rendering of untrusted extracted text|
 |03|CSRF|PARTIAL — bearer-auth API reduces ambient-cookie CSRF; verify no cookie-auth routes|
-|04|File upload|PARTIAL — extension/size checks present; magic-byte validation missing|
+|04|File upload|PARTIAL — extension/size and PDF/Office container signatures are validated; MIME sniffing/antivirus and deeper archive policy remain external hardening|
 |05|SSRF|PARTIAL — configured provider URLs are server-side; audit all URL-capable tools|
 |06|BOLA/IDOR|N/A — no multi-user object API identified|
 |07|Rate limiting|PARTIAL — shared gateway has limits; this API needs edge/distributed limits|
