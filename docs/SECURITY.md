@@ -4,11 +4,11 @@ This is a source/configuration assessment, not a production certification. Runti
 
 ## Present controls
 - Bearer auth is enforced for analysis routes in `api_security.py`; an unset token fails closed.
-- `app.py` checks auth before multipart parsing, bounds upload request bytes, and applies per-IP plus API-token-fingerprint sliding-window quotas to protected analysis requests (`api_rate_limit.py`).
+- `app.py` checks auth before multipart parsing, bounds upload request bytes, and applies per-IP plus API-token-fingerprint quotas to protected analysis requests. In production, counters use Upstash REST Lua `EVAL` with an app-specific prefix; development uses a bounded in-process limiter (`api_rate_limit.py`). Production writes fail closed with 503 if Upstash is unavailable.
 - `modules/document_processor.py` checks file extension and size.
 - Extraction prompts treat supplier documents as untrusted data (`config.py`).
 - CORS is configurable; Render blueprint no longer uses wildcard CORS.
-- Gateway exchange uses a short-lived one-time code. Its bearer is kept in server-side Streamlit session state, not launch URLs.
+- Gateway exchange uses a short-lived one-time code. Its bearer is kept in server-side Streamlit session state, not launch URLs. The exchange destination must match the configured approved HTTPS Gateway hostname and resolve only to public IPs; redirects are disabled.
 - Provider keys are supplied as server-side deployment environment variables.
 - No local password database, multi-tenant SQL database or webhook receiver is part of the identified app surface.
 
@@ -16,7 +16,7 @@ This is a source/configuration assessment, not a production certification. Runti
 1. Replace the CORS origin in `render.yaml` with the actual production UI origin(s).
 2. Configure unique high-entropy `API_AUTH_TOKEN` and provider keys in the hosting secret manager; rotate any exposed values.
 3. Add malware scanning or isolated document parsing if the app is exposed to untrusted public uploads; signature/archive checks do not replace content scanning.
-4. Add shared ingress/WAF rate limits for multi-instance deployments. The app-level limiter is process-local and does not coordinate replicas.
+4. Add shared ingress/WAF rate limits as a second perimeter layer. The production application limiter is already shared through Upstash; the Render `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` environment values must be configured.
 5. Restrict all URL-fetching integrations to configured HTTPS destinations; do not accept user-controlled URLs without SSRF protections.
 6. Verify logs and error trackers do not capture uploads, extracted supplier fields, credentials or bearer tokens.
 7. Run dependency scanning on the resolved deployment dependency set and patch high/critical findings.
@@ -29,9 +29,9 @@ This is a source/configuration assessment, not a production certification. Runti
 |02|XSS|PARTIAL — review all Streamlit Markdown/HTML rendering of untrusted extracted text|
 |03|CSRF|PARTIAL — bearer-auth API reduces ambient-cookie CSRF; verify no cookie-auth routes|
 |04|File upload|PARTIAL — extension/size and PDF/Office container signatures are validated; MIME sniffing/antivirus and deeper archive policy remain external hardening|
-|05|SSRF|PARTIAL — configured provider URLs are server-side; audit all URL-capable tools|
+|05|SSRF|IMPROVED/PARTIAL — one-time Gateway handoff is pinned to an approved HTTPS public host; continue reviewing future URL-capable tools|
 |06|BOLA/IDOR|N/A — no multi-user object API identified|
-|07|Rate limiting|PARTIAL — app-level per-IP and API-token-fingerprint limits are implemented; add shared ingress/WAF limits when scaled across instances|
+|07|Rate limiting|PARTIAL — per-IP and API-token-fingerprint counters are shared through Upstash in production; add ingress/WAF limits as a second layer|
 |08|Password hashing|N/A — no local passwords|
 |09|MFA|EXTERNAL — enable MFA on hosting/source-control/provider admin accounts|
 |10|Server-side permissions|PARTIAL — bearer auth on analysis endpoints; no app roles|
