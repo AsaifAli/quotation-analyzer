@@ -1,15 +1,17 @@
-"""Bounded in-process rate limiter for the protected QuoteSense API.
-
-The limiter is deliberately dependency-free so existing deployments continue
-working without a new Redis service. In multi-worker or multi-instance
-production deployments, enforce the same limits at the trusted ingress too.
-"""
+"""Shared Upstash-backed API quotas with an in-process development fallback."""
 from __future__ import annotations
 
+import hashlib
+import os
 import threading
 import time
 from collections import defaultdict, deque
 from collections.abc import Callable
+from typing import Any
+
+
+class RateLimitBackendUnavailable(RuntimeError):
+    """Raised when a production shared rate-limit backend is unavailable."""
 
 
 class SlidingWindowRateLimiter:
@@ -18,48 +20,97 @@ class SlidingWindowRateLimiter:
         self._events: dict[str, deque[float]] = defaultdict(deque)
         self._lock = threading.Lock()
 
-    def check(
-        self,
-        key: str,
-        *,
-        limit: int,
-        window_seconds: int = 60,
-    ) -> tuple[bool, int]:
-        """Return (allowed, retry_after_seconds) for a sliding time window."""
+    def check(self, key: str, *, limit: int, window_seconds: int = 60) -> tuple[bool, int]:
         safe_limit = max(1, int(limit))
         safe_window = max(1, int(window_seconds))
         now = self._clock()
         cutoff = now - safe_window
-
         with self._lock:
             events = self._events[key]
             while events and events[0] <= cutoff:
                 events.popleft()
-
             if len(events) >= safe_limit:
                 retry_after = max(1, int(events[0] + safe_window - now + 0.999))
                 return False, retry_after
-
             events.append(now)
-
-            # Keep the in-memory state bounded during noisy traffic. Oldest
-            # entries are evicted only after their events have been recorded;
-            # they may lose a limiter bucket, so ingress limits remain required.
             if len(self._events) > 20_000:
-                stale_keys = [
-                    event_key
-                    for event_key, bucket in self._events.items()
+                stale = [
+                    name for name, bucket in self._events.items()
                     if not bucket or bucket[-1] <= cutoff
                 ]
-                for event_key in stale_keys[:5_000]:
-                    self._events.pop(event_key, None)
-
+                for name in stale[:5_000]:
+                    self._events.pop(name, None)
             return True, 0
 
     def clear(self) -> None:
-        """Clear state; intended for deterministic tests and process shutdown."""
         with self._lock:
             self._events.clear()
 
 
-rate_limiter = SlidingWindowRateLimiter()
+_RATE_LIMIT_SCRIPT = """
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if count == 1 or ttl < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+    ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+"""
+
+
+class AdaptiveRateLimiter:
+    """One shared counter per protected IP/token, isolated by application prefix."""
+
+    def __init__(self) -> None:
+        self._memory = SlidingWindowRateLimiter()
+        self._client: Any | None = None
+        self._lock = threading.Lock()
+
+    def _production(self) -> bool:
+        return (
+            os.getenv("APP_ENV", "").strip().lower() in {"prod", "production"}
+            or os.getenv("RENDER", "").strip().lower() in {"1", "true"}
+        )
+
+    def _upstash_client(self):
+        url = os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
+        token = os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
+        if not url or not token:
+            raise RateLimitBackendUnavailable("Upstash rate-limit credentials are not configured.")
+        with self._lock:
+            if self._client is None:
+                try:
+                    from upstash_redis import Redis
+                    self._client = Redis(
+                        url=url,
+                        token=token,
+                        rest_retries=0,
+                        allow_telemetry=False,
+                    )
+                except Exception as exc:
+                    raise RateLimitBackendUnavailable from exc
+        return self._client
+
+    def check(self, key: str, *, limit: int, window_seconds: int = 60) -> tuple[bool, int]:
+        if not self._production():
+            return self._memory.check(key, limit=limit, window_seconds=window_seconds)
+        try:
+            digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+            namespaced_key = f"quotesense:ratelimit:v1:{digest}"
+            result = self._upstash_client().eval(
+                _RATE_LIMIT_SCRIPT,
+                keys=[namespaced_key],
+                args=[max(1, int(window_seconds))],
+            )
+            count, ttl = int(result[0]), int(result[1] or window_seconds)
+            return count <= max(1, int(limit)), max(1, ttl)
+        except RateLimitBackendUnavailable:
+            raise
+        except Exception as exc:
+            raise RateLimitBackendUnavailable from exc
+
+    def clear(self) -> None:
+        self._memory.clear()
+
+
+rate_limiter = AdaptiveRateLimiter()

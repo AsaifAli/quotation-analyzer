@@ -18,7 +18,7 @@ from starlette.responses import JSONResponse
 
 import config
 from api_security import api_auth_error, require_api_auth
-from api_rate_limit import rate_limiter
+from api_rate_limit import RateLimitBackendUnavailable, rate_limiter
 from llm_gateway_context import (
     reset_llm_gateway_token,
     set_llm_gateway_token,
@@ -72,49 +72,48 @@ async def request_security_context(request, call_next):
             if request.client is not None
             else "unknown"
         )
-        ip_allowed, ip_retry_after = rate_limiter.check(
-            f"ip:{client_ip}",
-            limit=config.API_IP_RATE_LIMIT_PER_MINUTE,
-        )
-        if not ip_allowed:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Too many requests. Please retry later."},
-                headers={"Retry-After": str(ip_retry_after)},
-            )
-
         authorization = request.headers.get("Authorization")
-        error = api_auth_error(authorization)
-
-        if error:
-            status, detail = error
-            headers = (
-                {"WWW-Authenticate": "Bearer"}
-                if status == 401
-                else {}
+        try:
+            ip_allowed, ip_retry_after = rate_limiter.check(
+                f"ip:{client_ip}",
+                limit=config.API_IP_RATE_LIMIT_PER_MINUTE,
             )
+            if not ip_allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Too many requests. Please retry later."},
+                    headers={"Retry-After": str(ip_retry_after)},
+                )
 
-            return JSONResponse(
-                status_code=status,
-                content={"detail": detail},
-                headers=headers,
+            error = api_auth_error(authorization)
+            if error:
+                status, detail = error
+                headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
+                return JSONResponse(
+                    status_code=status,
+                    content={"detail": detail},
+                    headers=headers,
+                )
+
+            token_fingerprint = hashlib.sha256(
+                (authorization or "").encode("utf-8")
+            ).hexdigest()
+            principal_allowed, principal_retry_after = rate_limiter.check(
+                f"token:{token_fingerprint}",
+                limit=config.API_RATE_LIMIT_PER_MINUTE,
             )
-
-        # A one-way fingerprint avoids retaining or exposing the API token in
-        # rate-limit state. The token is shared by the current service model,
-        # so this is a credential-level quota, not end-user tenancy.
-        token_fingerprint = hashlib.sha256(
-            (authorization or "").encode("utf-8")
-        ).hexdigest()
-        principal_allowed, principal_retry_after = rate_limiter.check(
-            f"token:{token_fingerprint}",
-            limit=config.API_RATE_LIMIT_PER_MINUTE,
-        )
-        if not principal_allowed:
+            if not principal_allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "API request limit reached. Please retry later."},
+                    headers={"Retry-After": str(principal_retry_after)},
+                )
+        except RateLimitBackendUnavailable:
+            logger.error("api_rate_limit_backend_unavailable")
             return JSONResponse(
-                status_code=429,
-                content={"detail": "API request limit reached. Please retry later."},
-                headers={"Retry-After": str(principal_retry_after)},
+                status_code=503,
+                content={"detail": "API is temporarily unavailable."},
+                headers={"Retry-After": "5"},
             )
 
         # Account for multipart boundaries and form metadata.
@@ -122,9 +121,9 @@ async def request_security_context(request, call_next):
             config.MAX_TOTAL_UPLOAD_SIZE_MB * 1024 * 1024
             + 2 * 1024 * 1024
         )
-
+    
         content_length = request.headers.get("content-length")
-
+    
         if content_length:
             try:
                 request_size = int(content_length)
@@ -133,18 +132,19 @@ async def request_security_context(request, call_next):
                     status_code=400,
                     content={"detail": "Invalid Content-Length header."},
                 )
-
+    
             if request_size < 0:
                 return JSONResponse(
                     status_code=400,
                     content={"detail": "Invalid Content-Length header."},
                 )
-
+    
             if request_size > max_request_bytes:
                 return JSONResponse(
                     status_code=413,
                     content={"detail": "Request size limit exceeded."},
                 )
+    
 
     # Reset the gateway token even if request processing fails.
     token = set_llm_gateway_token(

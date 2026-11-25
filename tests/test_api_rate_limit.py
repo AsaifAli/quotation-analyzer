@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import config
-from api_rate_limit import SlidingWindowRateLimiter
+from api_rate_limit import (AdaptiveRateLimiter, RateLimitBackendUnavailable, SlidingWindowRateLimiter)
 from app import app
 
 
@@ -54,3 +54,41 @@ def test_analysis_endpoint_limits_invalid_auth_by_ip(monkeypatch):
     assert first.status_code == 401
     assert second.status_code == 429
     assert second.headers["retry-after"]
+
+
+
+def test_production_quota_uses_shared_upstash_and_hashes_counter_key(monkeypatch):
+    class FakeRedis:
+        def __init__(self):
+            self.counts = {}
+            self.calls = []
+
+        def eval(self, script, *, keys, args):
+            self.calls.append((script, keys, args))
+            key = keys[0]
+            self.counts[key] = self.counts.get(key, 0) + 1
+            return [self.counts[key], args[0]]
+
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("UPSTASH_REDIS_REST_URL", "https://redis.example")
+    monkeypatch.setenv("UPSTASH_REDIS_REST_TOKEN", "test-token")
+    limiter = AdaptiveRateLimiter()
+    client = FakeRedis()
+    limiter._client = client
+
+    assert limiter.check("ip:203.0.113.10", limit=1) == (True, 60)
+    assert limiter.check("ip:203.0.113.10", limit=1) == (False, 60)
+    script, keys, args = client.calls[0]
+    assert "INCR" in script and "EXPIRE" in script
+    assert len(keys) == 1 and keys[0].startswith("quotesense:ratelimit:v1:")
+    assert "203.0.113.10" not in keys[0]
+    assert args == [60]
+
+
+def test_production_quota_fails_closed_without_upstash_credentials(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("UPSTASH_REDIS_REST_URL", raising=False)
+    monkeypatch.delenv("UPSTASH_REDIS_REST_TOKEN", raising=False)
+
+    with pytest.raises(RateLimitBackendUnavailable):
+        AdaptiveRateLimiter().check("ip:missing", limit=1)

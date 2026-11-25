@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import socket
 import gateway_handoff
 
 from gateway_handoff import (
@@ -8,6 +9,29 @@ from gateway_handoff import (
     exchange_endpoint,
     exchange_handoff_code,
 )
+
+
+
+@pytest.fixture(autouse=True)
+def public_gateway_dns(monkeypatch):
+    monkeypatch.setenv(
+        "PORTFOLIO_SESSION_GATEWAY_ALLOWED_HOSTS",
+        "gateway.example.com,portfolio-llm-gateway.onrender.com",
+    )
+    monkeypatch.setenv("APP_ENV", "test")
+
+    def resolve_public(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(gateway_handoff.socket, "getaddrinfo", resolve_public)
 
 
 class FakeResponse:
@@ -196,3 +220,39 @@ def test_exchange_requires_gateway_url(monkeypatch):
         match="not configured",
     ):
         exchange_handoff_code("a" * 43)
+
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://gateway.example.com/v1",
+        "https://attacker.example.com/v1",
+        "https://gateway.example.com:8443/v1",
+        "https://user:pass@gateway.example.com/v1",
+        "https://gateway.example.com/v1?redirect=https://attacker.example",
+    ],
+)
+def test_exchange_refuses_untrusted_gateway_destination(url):
+    with pytest.raises(GatewayHandoffError):
+        exchange_handoff_code("a" * 43, gateway_url=url)
+
+
+def test_exchange_refuses_private_gateway_dns(monkeypatch):
+    def resolve_private(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("10.0.0.10", 443),
+            )
+        ]
+
+    monkeypatch.setattr(gateway_handoff.socket, "getaddrinfo", resolve_private)
+    with pytest.raises(GatewayHandoffError, match="public addresses"):
+        exchange_handoff_code(
+            "a" * 43,
+            gateway_url="https://gateway.example.com",
+        )
