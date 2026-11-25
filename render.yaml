@@ -18,7 +18,7 @@ services:
       - key: OPENAI_MODEL
         value: openai/gpt-4o-mini
       - key: CORS_ORIGINS
-        value: "*"
+        value: https://studio.asaifali-studio.workers.dev
       - key: MAX_FILE_SIZE_MB
         value: "50"
       - key: MAX_DOCUMENT_CHARS
