@@ -40,7 +40,7 @@ This is a source/configuration assessment, not a production certification. Runti
 |13|Server-side API keys|PRESENT — Render env vars; never move private keys to frontend variables|
 |14|Zero localStorage tokens|PARTIAL — gateway bearer held in server-side Streamlit state; verify browser storage|
 |15|No default credentials|PARTIAL — no default login found; deployment tokens must be unique|
-|16|Strict CORS|PATCHED CONFIG — explicit origin placeholder; replace with real origin|
+|16|Strict CORS|PATCHED — explicit `https://studio.asaifali-studio.workers.dev` origin in Render blueprint; synchronize if the production website hostname changes|
 |17|Webhook signatures|N/A — no webhook receiver identified|
 |18|Source maps|N/A — no browser JS build pipeline identified|
 |19|Clean production logs|VERIFY — inspect runtime logs/error tracking for document/credential leakage|
