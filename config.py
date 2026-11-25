@@ -79,6 +79,16 @@ MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "90000"))
 # by making protected endpoints return HTTP 503.
 API_AUTH_TOKEN = os.getenv("API_AUTH_TOKEN", "").strip()
 
+# API abuse protection. Limits apply per client IP and authenticated API token.
+API_RATE_LIMIT_PER_MINUTE = max(
+    1,
+    int(os.getenv("API_RATE_LIMIT_PER_MINUTE", "10")),
+)
+API_IP_RATE_LIMIT_PER_MINUTE = max(
+    1,
+    int(os.getenv("API_IP_RATE_LIMIT_PER_MINUTE", "30")),
+)
+
 MAX_UPLOAD_FILES = max(
     1,
     int(os.getenv("MAX_UPLOAD_FILES", "5")),
