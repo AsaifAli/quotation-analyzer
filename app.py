@@ -76,8 +76,24 @@ class RequestBodySizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = dict(scope.get("headers", []))
-        content_length = headers.get(b"content-length")
+        raw_headers = [
+            (key.lower(), value)
+            for key, value in scope.get("headers", [])
+        ]
+        content_lengths = [
+            value
+            for key, value in raw_headers
+            if key == b"content-length"
+        ]
+        if len(content_lengths) > 1:
+            await self._send_error(
+                send,
+                400,
+                "Ambiguous Content-Length header.",
+            )
+            return
+
+        content_length = content_lengths[0] if content_lengths else None
         if content_length is not None:
             try:
                 declared_length = int(content_length)
