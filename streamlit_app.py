@@ -21,6 +21,7 @@ from modules.report import analysis_json, analysis_xlsx, quotations_csv
 import config
 from ui_theme import apply_theme
 from sidebar_toggle import render_sidebar_toggle
+from upload_limits import validate_uploaded_files
 
 st.set_page_config(
     page_title="QuoteSense · Procurement Intelligence",
@@ -1454,8 +1455,21 @@ def main():
         ],
         accept_multiple_files=True,
         label_visibility="collapsed",
-        help="Upload PDF, DOCX, TXT or XLSX supplier quotation files.",
+        help=(
+            f"PDF, DOCX, TXT or XLSX. Up to {config.MAX_FILE_SIZE_MB} MB "
+            f"per file, {config.MAX_UPLOAD_FILES} files, and "
+            f"{config.MAX_TOTAL_UPLOAD_SIZE_MB} MB combined."
+        ),
     )
+
+    upload_error = validate_uploaded_files(
+        uploaded or [],
+        max_files=config.MAX_UPLOAD_FILES,
+        max_file_bytes=config.MAX_FILE_SIZE_MB * 1024 * 1024,
+        max_total_bytes=config.MAX_TOTAL_UPLOAD_SIZE_MB * 1024 * 1024,
+    )
+    if upload_error and not run:
+        st.error(upload_error)
 
     _render_workspace_status(
         uploaded,
@@ -1520,6 +1534,9 @@ def main():
             st.warning(
                 "Please upload at least one quotation before starting an analysis."
             )
+
+        elif upload_error:
+            st.error(upload_error)
 
         else:
             paths = []

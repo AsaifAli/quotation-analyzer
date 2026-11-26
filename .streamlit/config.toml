@@ -1,0 +1,3 @@
+[server]
+# Match the application-level MAX_FILE_SIZE_MB default and Render setting.
+maxUploadSize = 50
