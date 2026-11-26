@@ -29,6 +29,10 @@ services:
         value: https://studio.asaifali-studio.workers.dev
       - key: MAX_FILE_SIZE_MB
         value: "50"
+      - key: MAX_UPLOAD_FILES
+        value: "5"
+      - key: MAX_TOTAL_UPLOAD_SIZE_MB
+        value: "100"
       - key: MAX_DOCUMENT_CHARS
         value: "90000"
       - key: REQUEST_TIMEOUT
