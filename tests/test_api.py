@@ -181,3 +181,71 @@ def test_request_size_limit_rejects_oversized_chunked_body():
     assert body_fully_read is False
     assert sent_messages[0]["status"] == 413
     assert b"Request body too large" in sent_messages[1]["body"]
+
+
+def test_request_size_limit_rejects_declared_oversized_body_before_reading():
+    import asyncio
+
+    from app import RequestBodySizeLimitMiddleware
+
+    downstream_called = False
+    sent_messages = []
+
+    async def downstream(scope, receive, send):
+        nonlocal downstream_called
+        downstream_called = True
+
+    async def receive():
+        raise AssertionError("Oversized declared body must be rejected before reading.")
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = RequestBodySizeLimitMiddleware(downstream, max_bytes=5)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/analyses",
+        "headers": [(b"content-length", b"6")],
+    }
+
+    asyncio.run(middleware(scope, receive, send))
+
+    assert downstream_called is False
+    assert sent_messages[0]["status"] == 413
+
+
+def test_request_size_limit_rejects_duplicate_content_length_headers():
+    import asyncio
+
+    from app import RequestBodySizeLimitMiddleware
+
+    downstream_called = False
+    sent_messages = []
+
+    async def downstream(scope, receive, send):
+        nonlocal downstream_called
+        downstream_called = True
+
+    async def receive():
+        raise AssertionError("Ambiguous request must be rejected before reading.")
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = RequestBodySizeLimitMiddleware(downstream, max_bytes=10)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/analyses",
+        "headers": [
+            (b"content-length", b"3"),
+            (b"content-length", b"9"),
+        ],
+    }
+
+    asyncio.run(middleware(scope, receive, send))
+
+    assert downstream_called is False
+    assert sent_messages[0]["status"] == 400
+    assert b"Ambiguous Content-Length" in sent_messages[1]["body"]
