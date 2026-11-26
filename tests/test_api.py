@@ -133,3 +133,51 @@ def test_analysis_returns_safe_filename_and_success(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "success"
     assert response.json()["uploaded_files"] == ["quote.txt"]
+
+def test_request_size_limit_rejects_oversized_chunked_body():
+    import asyncio
+
+    from app import RequestBodySizeLimitMiddleware
+
+    app_started = False
+    body_fully_read = False
+    sent_messages = []
+    incoming = [
+        {"type": "http.request", "body": b"1234", "more_body": True},
+        {"type": "http.request", "body": b"5678", "more_body": False},
+    ]
+
+    async def downstream(scope, receive, send):
+        nonlocal app_started, body_fully_read
+        app_started = True
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] == "http.request" and not message.get("more_body", False):
+                body_fully_read = True
+                break
+
+    async def receive():
+        return incoming.pop(0)
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = RequestBodySizeLimitMiddleware(
+        downstream,
+        max_bytes=5,
+    )
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/analyses",
+        "headers": [],
+    }
+
+    asyncio.run(middleware(scope, receive, send))
+
+    assert app_started is True
+    assert body_fully_read is False
+    assert sent_messages[0]["status"] == 413
+    assert b"Request body too large" in sent_messages[1]["body"]
