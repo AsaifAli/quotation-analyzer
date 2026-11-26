@@ -106,6 +106,10 @@ class DocumentProcessor:
         pages, evidence = [], []
         with open(path, "rb") as f:
             reader = PdfReader(f)
+            if len(reader.pages) > config.MAX_DOCUMENT_PAGES:
+                raise ValueError(
+                    f"PDF exceeds the {config.MAX_DOCUMENT_PAGES}-page processing limit."
+                )
             for i, page in enumerate(reader.pages, 1):
                 page_text = (page.extract_text() or "").strip()
                 kind = "text"
