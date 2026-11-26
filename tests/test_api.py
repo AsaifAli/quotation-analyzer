@@ -249,3 +249,28 @@ def test_request_size_limit_rejects_duplicate_content_length_headers():
     assert downstream_called is False
     assert sent_messages[0]["status"] == 400
     assert b"Ambiguous Content-Length" in sent_messages[1]["body"]
+
+
+def test_analysis_returns_413_for_document_processing_limit(monkeypatch):
+    from modules.document_processor import DocumentProcessingLimitError
+
+    monkeypatch.setattr(config, "API_AUTH_TOKEN", "test-secret")
+
+    class LimitedAgent:
+        def process_documents(self, *args, **kwargs):
+            raise DocumentProcessingLimitError(
+                "PDF exceeds the configured page processing limit."
+            )
+
+    monkeypatch.setattr("app.QuotationIntelligenceAgent", LimitedAgent)
+
+    response = client.post(
+        "/api/v1/analyses",
+        headers={"Authorization": "Bearer test-secret"},
+        files=[("files", ("quote.txt", b"quotation", "text/plain"))],
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "PDF exceeds the configured page processing limit."
+    )
