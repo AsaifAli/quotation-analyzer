@@ -24,6 +24,7 @@ from llm_gateway_context import (
     set_llm_gateway_token,
 )
 from modules.ai_agent import QuotationIntelligenceAgent
+from modules.document_processor import DocumentProcessingLimitError
 
 
 logger = logging.getLogger(__name__)
@@ -415,6 +416,12 @@ async def analyze(
 
     except HTTPException:
         raise
+
+    except DocumentProcessingLimitError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail=str(exc),
+        ) from exc
 
     except Exception:
         logger.exception("Quotation analysis failed")
