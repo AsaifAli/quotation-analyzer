@@ -378,5 +378,5 @@ def test_pdf_ingestion_rejects_excessive_page_counts(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MAX_DOCUMENT_PAGES", 2)
     monkeypatch.setattr(document_processor, "PdfReader", FakeReader)
 
-    with pytest.raises(ValueError, match="page limit"):
+    with pytest.raises(ValueError, match="processing limit"):
         DocumentProcessor().extract(str(path))
