@@ -73,6 +73,8 @@ DEFAULT_CRITERIA = [
 
 MAX_FILE_SIZE_MB = int(os.getenv("MAX_FILE_SIZE_MB", "50"))
 MAX_DOCUMENT_CHARS = int(os.getenv("MAX_DOCUMENT_CHARS", "90000"))
+# Bound page-level parser and OCR work on untrusted PDF uploads.
+MAX_DOCUMENT_PAGES = max(1, int(os.getenv("MAX_DOCUMENT_PAGES", "200")))
 
 # API security and resource limits.
 # An empty API_AUTH_TOKEN deliberately disables API analysis access

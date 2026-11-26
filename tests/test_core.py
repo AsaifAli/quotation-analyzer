@@ -358,3 +358,25 @@ def test_upload_validation_accepts_valid_docx_and_xlsx(tmp_path):
     processor = DocumentProcessor()
     processor.validate_file(str(docx_path))
     processor.validate_file(str(xlsx_path))
+
+
+def test_pdf_ingestion_rejects_excessive_page_counts(tmp_path, monkeypatch):
+    import config
+    import pytest
+    from modules import document_processor
+
+    class FakePage:
+        def extract_text(self):
+            raise AssertionError("Pages must not be parsed after the page cap.")
+
+    class FakeReader:
+        def __init__(self, _file):
+            self.pages = [FakePage(), FakePage(), FakePage()]
+
+    path = tmp_path / "many-pages.pdf"
+    path.write_bytes(b"%PDF-1.7")
+    monkeypatch.setattr(config, "MAX_DOCUMENT_PAGES", 2)
+    monkeypatch.setattr(document_processor, "PdfReader", FakeReader)
+
+    with pytest.raises(ValueError, match="page limit"):
+        DocumentProcessor().extract(str(path))

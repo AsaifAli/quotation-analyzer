@@ -24,9 +24,116 @@ from llm_gateway_context import (
     set_llm_gateway_token,
 )
 from modules.ai_agent import QuotationIntelligenceAgent
+from modules.document_processor import DocumentProcessingLimitError
 
 
 logger = logging.getLogger(__name__)
+
+
+class _RequestBodyTooLarge(Exception):
+    """Raised when a streamed request exceeds the configured body limit."""
+
+
+class RequestBodySizeLimitMiddleware:
+    """Bound upload request bodies even when Content-Length is absent.
+
+    Only the two authenticated analysis endpoints are subject to this limit.
+    The middleware counts chunks as the downstream multipart parser consumes
+    them, so chunked requests cannot bypass the declared-length preflight.
+    """
+
+    PROTECTED_PATHS = {"/api/v1/analyses", "/analyze"}
+
+    def __init__(self, app, *, max_bytes: int):
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def _send_error(self, send, status_code: int, message: str) -> None:
+        import json
+
+        body = json.dumps({"detail": message}).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status_code,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": body,
+            "more_body": False,
+        })
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") != "POST"
+            or scope.get("path") not in self.PROTECTED_PATHS
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        raw_headers = [
+            (key.lower(), value)
+            for key, value in scope.get("headers", [])
+        ]
+        content_lengths = [
+            value
+            for key, value in raw_headers
+            if key == b"content-length"
+        ]
+        if len(content_lengths) > 1:
+            await self._send_error(
+                send,
+                400,
+                "Ambiguous Content-Length header.",
+            )
+            return
+
+        content_length = content_lengths[0] if content_lengths else None
+        if content_length is not None:
+            try:
+                declared_length = int(content_length)
+            except (TypeError, ValueError):
+                await self._send_error(send, 400, "Invalid Content-Length header.")
+                return
+            if declared_length < 0:
+                await self._send_error(send, 400, "Invalid Content-Length header.")
+                return
+            if declared_length > self.max_bytes:
+                await self._send_error(send, 413, "Request body too large.")
+                return
+
+        received_bytes = 0
+        response_started = False
+
+        async def limited_receive():
+            nonlocal received_bytes
+            message = await receive()
+            if message.get("type") == "http.request":
+                received_bytes += len(message.get("body", b""))
+                if received_bytes > self.max_bytes:
+                    raise _RequestBodyTooLarge
+            return message
+
+        async def tracked_send(message):
+            nonlocal response_started
+            if message.get("type") == "http.response.start":
+                response_started = True
+            await send(message)
+
+        try:
+            await self.app(scope, limited_receive, tracked_send)
+        except _RequestBodyTooLarge:
+            # Multipart parsing happens before the analysis handler starts.
+            # No response should have been started at this point.
+            if not response_started:
+                await self._send_error(send, 413, "Request body too large.")
+
 
 app = FastAPI(
     title="Quotation Intelligence API",
@@ -35,6 +142,11 @@ app = FastAPI(
         "AI-assisted procurement quotation analysis "
         "with deterministic validation and scoring."
     ),
+)
+
+app.add_middleware(
+    RequestBodySizeLimitMiddleware,
+    max_bytes=config.MAX_TOTAL_UPLOAD_SIZE_MB * 1024 * 1024 + 2 * 1024 * 1024,
 )
 
 app.add_middleware(
@@ -116,35 +228,6 @@ async def request_security_context(request, call_next):
                 headers={"Retry-After": "5"},
             )
 
-        # Account for multipart boundaries and form metadata.
-        max_request_bytes = (
-            config.MAX_TOTAL_UPLOAD_SIZE_MB * 1024 * 1024
-            + 2 * 1024 * 1024
-        )
-    
-        content_length = request.headers.get("content-length")
-    
-        if content_length:
-            try:
-                request_size = int(content_length)
-            except ValueError:
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "Invalid Content-Length header."},
-                )
-    
-            if request_size < 0:
-                return JSONResponse(
-                    status_code=400,
-                    content={"detail": "Invalid Content-Length header."},
-                )
-    
-            if request_size > max_request_bytes:
-                return JSONResponse(
-                    status_code=413,
-                    content={"detail": "Request size limit exceeded."},
-                )
-    
 
     # Reset the gateway token even if request processing fails.
     token = set_llm_gateway_token(
@@ -333,6 +416,12 @@ async def analyze(
 
     except HTTPException:
         raise
+
+    except DocumentProcessingLimitError as exc:
+        raise HTTPException(
+            status_code=413,
+            detail=str(exc),
+        ) from exc
 
     except Exception:
         logger.exception("Quotation analysis failed")

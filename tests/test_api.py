@@ -133,3 +133,144 @@ def test_analysis_returns_safe_filename_and_success(monkeypatch):
     assert response.status_code == 200
     assert response.json()["status"] == "success"
     assert response.json()["uploaded_files"] == ["quote.txt"]
+
+def test_request_size_limit_rejects_oversized_chunked_body():
+    import asyncio
+
+    from app import RequestBodySizeLimitMiddleware
+
+    app_started = False
+    body_fully_read = False
+    sent_messages = []
+    incoming = [
+        {"type": "http.request", "body": b"1234", "more_body": True},
+        {"type": "http.request", "body": b"5678", "more_body": False},
+    ]
+
+    async def downstream(scope, receive, send):
+        nonlocal app_started, body_fully_read
+        app_started = True
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] == "http.request" and not message.get("more_body", False):
+                body_fully_read = True
+                break
+
+    async def receive():
+        return incoming.pop(0)
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = RequestBodySizeLimitMiddleware(
+        downstream,
+        max_bytes=5,
+    )
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/analyses",
+        "headers": [],
+    }
+
+    asyncio.run(middleware(scope, receive, send))
+
+    assert app_started is True
+    assert body_fully_read is False
+    assert sent_messages[0]["status"] == 413
+    assert b"Request body too large" in sent_messages[1]["body"]
+
+
+def test_request_size_limit_rejects_declared_oversized_body_before_reading():
+    import asyncio
+
+    from app import RequestBodySizeLimitMiddleware
+
+    downstream_called = False
+    sent_messages = []
+
+    async def downstream(scope, receive, send):
+        nonlocal downstream_called
+        downstream_called = True
+
+    async def receive():
+        raise AssertionError("Oversized declared body must be rejected before reading.")
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = RequestBodySizeLimitMiddleware(downstream, max_bytes=5)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/analyses",
+        "headers": [(b"content-length", b"6")],
+    }
+
+    asyncio.run(middleware(scope, receive, send))
+
+    assert downstream_called is False
+    assert sent_messages[0]["status"] == 413
+
+
+def test_request_size_limit_rejects_duplicate_content_length_headers():
+    import asyncio
+
+    from app import RequestBodySizeLimitMiddleware
+
+    downstream_called = False
+    sent_messages = []
+
+    async def downstream(scope, receive, send):
+        nonlocal downstream_called
+        downstream_called = True
+
+    async def receive():
+        raise AssertionError("Ambiguous request must be rejected before reading.")
+
+    async def send(message):
+        sent_messages.append(message)
+
+    middleware = RequestBodySizeLimitMiddleware(downstream, max_bytes=10)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/analyses",
+        "headers": [
+            (b"content-length", b"3"),
+            (b"content-length", b"9"),
+        ],
+    }
+
+    asyncio.run(middleware(scope, receive, send))
+
+    assert downstream_called is False
+    assert sent_messages[0]["status"] == 400
+    assert b"Ambiguous Content-Length" in sent_messages[1]["body"]
+
+
+def test_analysis_returns_413_for_document_processing_limit(monkeypatch):
+    from modules.document_processor import DocumentProcessingLimitError
+
+    monkeypatch.setattr(config, "API_AUTH_TOKEN", "test-secret")
+
+    class LimitedAgent:
+        def process_documents(self, *args, **kwargs):
+            raise DocumentProcessingLimitError(
+                "PDF exceeds the configured page processing limit."
+            )
+
+    monkeypatch.setattr("app.QuotationIntelligenceAgent", LimitedAgent)
+
+    response = client.post(
+        "/api/v1/analyses",
+        headers={"Authorization": "Bearer test-secret"},
+        files=[("files", ("quote.txt", b"quotation", "text/plain"))],
+    )
+
+    assert response.status_code == 413
+    assert response.json()["detail"] == (
+        "PDF exceeds the configured page processing limit."
+    )
