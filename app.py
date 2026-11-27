@@ -660,7 +660,7 @@ async def analyze_stream(
             except asyncio.TimeoutError:
                 if task.done():
                     break
-                yield ": keep-alive\\n\\n"
+                yield ": keep-alive\n\n"
                 continue
             if queued is None:
                 break
