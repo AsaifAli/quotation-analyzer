@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+from datetime import datetime, timezone
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -31,6 +32,37 @@ from .web_search import WebSearch
 
 
 logger = logging.getLogger(__name__)
+
+
+def _processing_event(trace, stage, status, message, metrics=None, callback=None):
+    """Create a privacy-safe processing event and notify an optional observer."""
+    safe_metrics = {}
+    for key, value in (metrics or {}).items():
+        if (
+            isinstance(key, str)
+            and key
+            and len(key) <= 48
+            and key.replace("_", "").isalnum()
+            and isinstance(value, (bool, int, float))
+        ):
+            safe_metrics[key] = value
+
+    event = {
+        "sequence": len(trace) + 1,
+        "stage": stage,
+        "status": status,
+        "message": message,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+        "metrics": safe_metrics,
+    }
+    trace.append(event)
+    if callback:
+        try:
+            callback(event)
+        except Exception:
+            # Observability must never break procurement analysis.
+            logger.debug("processing_stage_observer_failed", exc_info=True)
+    return event
 
 
 @dataclass
@@ -142,8 +174,24 @@ class QuotationIntelligenceAgent:
         preferences=None,
         do_market=False,
         analyze=True,
+        stage_callback=None,
     ):
         started = time.perf_counter()
+        trace = []
+        current_stage = ["processing"]
+
+        def emit(stage, status, message, metrics=None):
+            if status == "started":
+                current_stage[0] = stage
+            return _processing_event(
+                trace,
+                stage,
+                status,
+                message,
+                metrics=metrics,
+                callback=stage_callback,
+            )
+
         try:
             result = self._process_documents(
                 document_paths,
@@ -153,8 +201,16 @@ class QuotationIntelligenceAgent:
                 preferences=preferences,
                 do_market=do_market,
                 analyze=analyze,
+                stage_emitter=emit,
             )
+            if result.get("status") == "success":
+                result["processing_trace"] = trace
         except Exception:
+            emit(
+                current_stage[0],
+                "failed",
+                "This processing stage could not be completed.",
+            )
             record_event(
                 event_type="run.failed",
                 status="failed",
@@ -189,6 +245,7 @@ class QuotationIntelligenceAgent:
         preferences=None,
         do_market=False,
         analyze=True,
+        stage_emitter=None,
     ):
         if not document_paths:
             return {
@@ -201,11 +258,40 @@ class QuotationIntelligenceAgent:
         all_quotations = []
         all_evidence = []
 
-        for path in document_paths:
+        for document_index, path in enumerate(document_paths, start=1):
+            extract_started = time.perf_counter()
+            if stage_emitter:
+                stage_emitter(
+                    "extract",
+                    "started",
+                    "Reading the document and extracting structured supplier information.",
+                    {
+                        "document_index": document_index,
+                        "document_count": len(document_paths),
+                    },
+                )
             result = self.extract_document(path)
             documents.append(result)
             all_quotations.extend(result["quotations"])
             all_evidence.extend(result["evidence"])
+            if stage_emitter:
+                stage_emitter(
+                    "extract",
+                    "completed",
+                    "Structured extraction completed for this document.",
+                    {
+                        "document_index": document_index,
+                        "document_count": len(document_paths),
+                        "quotation_count": len(result["quotations"]),
+                        "evidence_item_count": len(result["evidence"]),
+                        "extracted_field_count": sum(
+                            len(item) for item in result["quotations"]
+                        ),
+                        "duration_ms": round(
+                            (time.perf_counter() - extract_started) * 1000
+                        ),
+                    },
+                )
 
         # Deduplicate exact supplier/cost pairs across duplicate uploads.
         seen = set()
@@ -227,14 +313,75 @@ class QuotationIntelligenceAgent:
         ]
         self.state.quotations = quotations
         self.state.evidence = all_evidence
+
+        if stage_emitter:
+            stage_emitter(
+                "validation",
+                "started",
+                "Checking extracted records against the quotation schema.",
+                {"quotation_count": len(quotations)},
+            )
         self.state.validation = validate_quotations(quotations)
+        if stage_emitter:
+            stage_emitter(
+                "validation",
+                "completed",
+                "Schema validation and completeness checks completed.",
+                {
+                    "quotation_count": len(quotations),
+                    "missing_field_count": sum(
+                        len(item.get("missing_fields") or [])
+                        for item in self.state.validation
+                    ),
+                },
+            )
+
+        if stage_emitter:
+            stage_emitter(
+                "scoring",
+                "started",
+                "Calculating deterministic weighted supplier scores.",
+                {"supplier_count": len(quotations)},
+            )
         self.state.scores = score_quotations(quotations, weights)
+        if stage_emitter:
+            stage_emitter(
+                "scoring",
+                "completed",
+                "Deterministic scoring completed using the configured business rules.",
+                {
+                    "supplier_count": len(quotations),
+                    "scored_supplier_count": sum(
+                        item.get("score") is not None for item in self.state.scores
+                    ),
+                },
+            )
+
+        if stage_emitter:
+            stage_emitter(
+                "risk_assessment",
+                "started",
+                "Checking missing commercial terms and eligible price anomalies.",
+                {"supplier_count": len(quotations)},
+            )
         self.state.risks = detect_risks(
             quotations,
             self.state.scores,
         )
-
         anomalies = detect_price_anomalies(quotations)
+        if stage_emitter:
+            stage_emitter(
+                "risk_assessment",
+                "completed",
+                "Commercial risk and price-anomaly checks completed.",
+                {
+                    "risk_finding_count": sum(
+                        len(item.get("items") or [])
+                        for item in self.state.risks
+                    ),
+                    "price_anomaly_count": len(anomalies),
+                },
+            )
 
         result = {
             "status": "success",
@@ -287,8 +434,32 @@ class QuotationIntelligenceAgent:
                 for keyword in ["validate", "extract"]
             )
         ):
+            if stage_emitter:
+                stage_emitter(
+                    "analysis",
+                    "started",
+                    "Reviewing quotations, deterministic scores and flagged risks.",
+                )
             result["analysis"] = self.analyze(criteria)
+            if stage_emitter:
+                stage_emitter(
+                    "analysis",
+                    "completed",
+                    "Qualitative comparison completed.",
+                )
+            if stage_emitter:
+                stage_emitter(
+                    "recommendation",
+                    "started",
+                    "Preparing an evidence-informed recommendation for human review.",
+                )
             result["recommendation"] = self.recommend(preferences)
+            if stage_emitter:
+                stage_emitter(
+                    "recommendation",
+                    "completed",
+                    "Recommendation and alternatives are ready for review.",
+                )
 
         if any(
             keyword in lowered
@@ -298,6 +469,23 @@ class QuotationIntelligenceAgent:
                 "status": "success",
                 "validation": self.state.validation,
             }
+
+        if stage_emitter:
+            stage_emitter(
+                "complete",
+                "completed",
+                "Quotation analysis completed. Review the evidence before making a decision.",
+                {
+                    "document_count": len(documents),
+                    "quotation_count": len(quotations),
+                    "scored_supplier_count": len(self.state.scores),
+                    "risk_finding_count": sum(
+                        len(item.get("items") or [])
+                        for item in self.state.risks
+                    ),
+                    "price_anomaly_count": len(anomalies),
+                },
+            )
 
         return result
 
