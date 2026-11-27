@@ -5,6 +5,7 @@ import logging
 import os
 import tempfile
 
+import requests
 from fastapi import (
     Depends,
     FastAPI,
@@ -290,15 +291,55 @@ def llm_health():
 
 @app.get("/ready")
 def ready():
-    info = llm_health()
+    """Report readiness for direct-provider or per-client Gateway BYOK mode.
 
+    A Gateway-backed service must not require a process-wide provider key:
+    each authenticated client supplies its own short-lived Gateway session.
+    Production readiness still requires the shared rate-limit backend because
+    protected analysis requests fail closed when it is unavailable.
+    """
+    is_production = (
+        os.getenv("APP_ENV", "").strip().lower() in {"prod", "production"}
+        or os.getenv("RENDER", "").strip().lower() in {"1", "true"}
+    )
+    if is_production and (
+        not os.getenv("UPSTASH_REDIS_REST_URL", "").strip()
+        or not os.getenv("UPSTASH_REDIS_REST_TOKEN", "").strip()
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Production rate limiting is not configured.",
+        )
+
+    gateway_url = config.LLM_GATEWAY_URL.strip().rstrip("/")
+    if gateway_url:
+        health_url = (
+            f"{gateway_url}/health"
+            if gateway_url.endswith("/v1")
+            else f"{gateway_url}/v1/health"
+        )
+        try:
+            response = requests.get(health_url, timeout=5)
+            response.raise_for_status()
+        except requests.RequestException:
+            raise HTTPException(
+                status_code=503,
+                detail="Portfolio Gateway is unavailable.",
+            ) from None
+        return {
+            "status": "ready",
+            "provider": "gateway",
+            "mode": "BYOK",
+        }
+
+    info = llm_health()
     if not info.get("available"):
         raise HTTPException(
             status_code=503,
             detail="LLM provider is not ready.",
         )
 
-    return {"status": "ready"}
+    return {"status": "ready", "provider": info.get("provider", config.LLM_PROVIDER)}
 
 
 @app.post(

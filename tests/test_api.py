@@ -312,3 +312,76 @@ def test_analysis_rejects_unverified_gateway_session(monkeypatch):
     )
 
     assert response.status_code == 401
+
+
+
+def test_ready_uses_the_configured_gateway_for_byok_without_a_global_api_key(monkeypatch):
+    import requests
+
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setattr(
+        config,
+        "LLM_GATEWAY_URL",
+        "https://portfolio-llm-gateway.onrender.com/v1",
+    )
+    requested = {}
+
+    class GatewayResponse:
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, timeout):
+        requested.update(url=url, timeout=timeout)
+        return GatewayResponse()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    response = client.get("/ready")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ready",
+        "provider": "gateway",
+        "mode": "BYOK",
+    }
+    assert requested == {
+        "url": "https://portfolio-llm-gateway.onrender.com/v1/health",
+        "timeout": 5,
+    }
+
+
+def test_ready_fails_closed_when_production_rate_limit_credentials_are_missing(monkeypatch):
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.delenv("UPSTASH_REDIS_REST_URL", raising=False)
+    monkeypatch.delenv("UPSTASH_REDIS_REST_TOKEN", raising=False)
+    monkeypatch.setattr(
+        config,
+        "LLM_GATEWAY_URL",
+        "https://portfolio-llm-gateway.onrender.com/v1",
+    )
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "Production rate limiting is not configured."
+    )
+
+
+def test_ready_reports_gateway_unavailable_when_health_check_fails(monkeypatch):
+    import requests
+
+    monkeypatch.setenv("APP_ENV", "test")
+    monkeypatch.setattr(
+        config,
+        "LLM_GATEWAY_URL",
+        "https://portfolio-llm-gateway.onrender.com/v1",
+    )
+
+    def unavailable(*args, **kwargs):
+        raise requests.ConnectionError("unavailable")
+
+    monkeypatch.setattr(requests, "get", unavailable)
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Portfolio Gateway is unavailable."
