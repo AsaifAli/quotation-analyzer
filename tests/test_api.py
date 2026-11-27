@@ -274,3 +274,41 @@ def test_analysis_returns_413_for_document_processing_limit(monkeypatch):
     assert response.json()["detail"] == (
         "PDF exceeds the configured page processing limit."
     )
+
+
+def test_analysis_accepts_project_scoped_gateway_session(monkeypatch):
+    import api_security
+
+    monkeypatch.setattr(config, "API_AUTH_TOKEN", "")
+    monkeypatch.setattr(api_security, "verify_gateway_session", lambda token: {"active": True, "project": "quotesense", "owner_scope": "a" * 64})
+
+    class DummyAgent:
+        def process_documents(self, paths, query, criteria):
+            return {"status": "success", "quotations": [], "scores": []}
+
+    monkeypatch.setattr("app.QuotationIntelligenceAgent", DummyAgent)
+    response = client.post(
+        "/api/v1/analyses",
+        headers={"X-LLM-Gateway-Token": "opaque-project-session"},
+        data={"query": "Compare quotations", "criteria": "cost"},
+        files=[("files", ("quote.txt", b"quotation content", "text/plain"))],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+
+
+def test_analysis_rejects_unverified_gateway_session(monkeypatch):
+    import api_security
+    from gateway_handoff import GatewayHandoffError
+
+    monkeypatch.setattr(config, "API_AUTH_TOKEN", "")
+    monkeypatch.setattr(api_security, "verify_gateway_session", lambda token: (_ for _ in ()).throw(GatewayHandoffError("The Gateway session is not authorized for QuoteSense.")))
+
+    response = client.post(
+        "/api/v1/analyses",
+        headers={"X-LLM-Gateway-Token": "wrong-project-session"},
+        files=[("files", ("quote.txt", b"quotation content", "text/plain"))],
+    )
+
+    assert response.status_code == 401

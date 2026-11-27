@@ -185,6 +185,7 @@ async def request_security_context(request, call_next):
             else "unknown"
         )
         authorization = request.headers.get("Authorization")
+        gateway_token = request.headers.get("X-LLM-Gateway-Token")
         try:
             ip_allowed, ip_retry_after = rate_limiter.check(
                 f"ip:{client_ip}",
@@ -197,7 +198,7 @@ async def request_security_context(request, call_next):
                     headers={"Retry-After": str(ip_retry_after)},
                 )
 
-            error = api_auth_error(authorization)
+            error = api_auth_error(authorization, gateway_token)
             if error:
                 status, detail = error
                 headers = {"WWW-Authenticate": "Bearer"} if status == 401 else {}
@@ -207,8 +208,18 @@ async def request_security_context(request, call_next):
                     headers=headers,
                 )
 
+            # A Gateway-authenticated BYOK request has no Authorization
+            # header by design. Use a one-way digest of its project JWT so
+            # sessions retain independent API quotas without storing tokens.
+            quota_identity = (
+                authorization
+                if authorization
+                else "gateway:" + hashlib.sha256(
+                    (gateway_token or "").encode("utf-8")
+                ).hexdigest()
+            )
             token_fingerprint = hashlib.sha256(
-                (authorization or "").encode("utf-8")
+                quota_identity.encode("utf-8")
             ).hexdigest()
             principal_allowed, principal_retry_after = rate_limiter.check(
                 f"token:{token_fingerprint}",

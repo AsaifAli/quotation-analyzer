@@ -92,3 +92,40 @@ def test_production_quota_fails_closed_without_upstash_credentials(monkeypatch):
 
     with pytest.raises(RateLimitBackendUnavailable):
         AdaptiveRateLimiter().check("ip:missing", limit=1)
+
+
+
+def test_gateway_sessions_get_independent_principal_rate_limit_buckets(monkeypatch):
+    import api_security
+
+    monkeypatch.setattr(config, "API_AUTH_TOKEN", "")
+    monkeypatch.setattr(config, "API_RATE_LIMIT_PER_MINUTE", 1)
+    monkeypatch.setattr(config, "API_IP_RATE_LIMIT_PER_MINUTE", 20)
+    monkeypatch.setattr(
+        api_security,
+        "verify_gateway_session",
+        lambda token: {"active": True, "project": "quotesense", "owner_scope": "a" * 64},
+    )
+
+    from api_rate_limit import rate_limiter
+    rate_limiter.clear()
+    client = TestClient(app)
+
+    first = client.post(
+        "/api/v1/analyses",
+        headers={"X-LLM-Gateway-Token": "gateway-session-one"},
+    )
+    second = client.post(
+        "/api/v1/analyses",
+        headers={"X-LLM-Gateway-Token": "gateway-session-two"},
+    )
+    third = client.post(
+        "/api/v1/analyses",
+        headers={"X-LLM-Gateway-Token": "gateway-session-one"},
+    )
+
+    # No files are supplied, so each authenticated request reaches FastAPI's
+    # 422 validation; only the third request exceeds the first session quota.
+    assert first.status_code == 422
+    assert second.status_code == 422
+    assert third.status_code == 429

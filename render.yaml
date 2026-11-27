@@ -45,3 +45,55 @@ services:
         value: https://ai-engineering-evaluation-harness.onrender.com
       - key: EVALUATION_HARNESS_INGEST_TOKEN
         sync: false
+
+  # Dedicated FastAPI surface for the shared React QuoteSense workspace.
+  # The legacy Streamlit service above remains available during migration.
+  - type: web
+    name: quotation-analyzer-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile.api
+    autoDeploy: true
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LLM_PROVIDER
+        value: openai
+      - key: LLM_GATEWAY_URL
+        value: https://portfolio-llm-gateway.onrender.com/v1
+      - key: PORTFOLIO_SESSION_GATEWAY_URL
+        value: https://portfolio-llm-gateway.onrender.com
+      - key: PORTFOLIO_SESSION_GATEWAY_ALLOWED_HOSTS
+        value: portfolio-llm-gateway.onrender.com
+      - key: OPENAI_BASE_URL
+        value: https://openrouter.ai/api/v1
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: openai/gpt-4o-mini
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
+      - key: MAX_UPLOAD_FILES
+        value: "5"
+      - key: MAX_TOTAL_UPLOAD_SIZE_MB
+        value: "100"
+      - key: MAX_DOCUMENT_CHARS
+        value: "90000"
+      - key: MAX_DOCUMENT_PAGES
+        value: "200"
+      - key: REQUEST_TIMEOUT
+        value: "120"
+      - key: LLM_MAX_RETRIES
+        value: "2"
+      - key: OLLAMA_ENABLED
+        value: "false"
+      - key: EVALUATION_HARNESS_URL
+        value: https://ai-engineering-evaluation-harness.onrender.com
+      - key: EVALUATION_HARNESS_INGEST_TOKEN
+        sync: false

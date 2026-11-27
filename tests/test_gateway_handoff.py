@@ -256,3 +256,81 @@ def test_exchange_refuses_private_gateway_dns(monkeypatch):
             "a" * 43,
             gateway_url="https://gateway.example.com",
         )
+
+
+def test_gateway_status_accepts_active_quotesense_session(monkeypatch):
+    payload = {
+        "active": True,
+        "project": "quotesense",
+        "session_project": "portfolio",
+        "expires_at": int(__import__("time").time()) + 900,
+        "provider": "openai",
+        "model": "gpt-4o-mini",
+        "owner_scope": "a" * 64,
+    }
+
+    class StatusOpener:
+        def open(self, request, timeout):
+            assert request.full_url == "https://gateway.example.com/v1/demo/session/status"
+            assert request.get_method() == "GET"
+            assert request.get_header("Authorization") == "Bearer gateway-token"
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(gateway_handoff, "build_opener", lambda *args: StatusOpener())
+    result = gateway_handoff.verify_gateway_session("gateway-token", gateway_url="https://gateway.example.com/v1")
+    assert result["active"] is True
+    assert result["provider"] == "openai"
+
+
+def test_gateway_status_rejects_wrong_project(monkeypatch):
+    payload = {
+        "active": True,
+        "project": "flowpilot",
+        "session_project": "portfolio",
+        "expires_at": int(__import__("time").time()) + 900,
+        "owner_scope": "a" * 64,
+    }
+
+    class StatusOpener:
+        def open(self, request, timeout):
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(gateway_handoff, "build_opener", lambda *args: StatusOpener())
+    with pytest.raises(GatewayHandoffError, match="not authorized for QuoteSense"):
+        gateway_handoff.verify_gateway_session("gateway-token", gateway_url="https://gateway.example.com/v1")
+
+
+def test_gateway_status_rejects_expired_session(monkeypatch):
+    payload = {
+        "active": True,
+        "project": "quotesense",
+        "session_project": "portfolio",
+        "expires_at": int(__import__("time").time()) - 30,
+        "owner_scope": "a" * 64,
+    }
+
+    class StatusOpener:
+        def open(self, request, timeout):
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(gateway_handoff, "build_opener", lambda *args: StatusOpener())
+    with pytest.raises(GatewayHandoffError, match="expired"):
+        gateway_handoff.verify_gateway_session("gateway-token", gateway_url="https://gateway.example.com/v1")
+
+
+
+def test_gateway_status_rejects_missing_stable_owner_scope(monkeypatch):
+    payload = {
+        "active": True,
+        "project": "quotesense",
+        "session_project": "portfolio",
+        "expires_at": int(__import__("time").time()) + 900,
+    }
+
+    class StatusOpener:
+        def open(self, request, timeout):
+            return FakeResponse(payload)
+
+    monkeypatch.setattr(gateway_handoff, "build_opener", lambda *args: StatusOpener())
+    with pytest.raises(GatewayHandoffError, match="owner scope"):
+        gateway_handoff.verify_gateway_session("gateway-token", gateway_url="https://gateway.example.com/v1")
