@@ -66,13 +66,23 @@ def test_analysis_stream_emits_stage_events_and_the_unchanged_analysis_result(mo
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    frames = [frame for frame in response.text.split("\\n\\n") if frame.strip()]
     events = []
-    for frame in frames:
-        event_name = next((line[7:] for line in frame.splitlines() if line.startswith("event: ")), "message")
-        data_line = next((line[6:] for line in frame.splitlines() if line.startswith("data: ")), None)
-        if data_line:
-            events.append((event_name, json.loads(data_line)))
+    event_name = "message"
+    data_lines = []
+
+    def flush_event():
+        if data_lines:
+            events.append((event_name, json.loads("\\n".join(data_lines))))
+            data_lines.clear()
+
+    for line in response.text.splitlines():
+        if not line:
+            flush_event()
+        elif line.startswith("event: "):
+            event_name = line[7:]
+        elif line.startswith("data: "):
+            data_lines.append(line[6:])
+    flush_event()
 
     assert any(name == "stage" and payload["stage"] == "ingest" for name, payload in events)
     assert any(name == "stage" and payload["stage"] == "extract" for name, payload in events)
