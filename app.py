@@ -1,6 +1,8 @@
 """FastAPI service for the quotation intelligence engine."""
 
+import asyncio
 import hashlib
+import json
 import logging
 import os
 import tempfile
@@ -15,12 +17,13 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 import config
 from api_security import api_auth_error, require_api_auth
 from api_rate_limit import RateLimitBackendUnavailable, rate_limiter
 from llm_gateway_context import (
+    get_llm_gateway_token,
     reset_llm_gateway_token,
     set_llm_gateway_token,
 )
@@ -43,7 +46,7 @@ class RequestBodySizeLimitMiddleware:
     them, so chunked requests cannot bypass the declared-length preflight.
     """
 
-    PROTECTED_PATHS = {"/api/v1/analyses", "/analyze"}
+    PROTECTED_PATHS = {"/api/v1/analyses", "/api/v1/analyses/stream", "/analyze"}
 
     def __init__(self, app, *, max_bytes: int):
         if max_bytes <= 0:
@@ -171,6 +174,7 @@ async def request_security_context(request, call_next):
 
     protected_routes = {
         "/api/v1/analyses",
+        "/api/v1/analyses/stream",
         "/analyze",
     }
 
@@ -498,6 +502,187 @@ async def analyze(
                     os.unlink(path)
             except OSError:
                 logger.exception("Could not remove a temporary upload file.")
+
+
+def _sse_frame(event_name: str, payload: dict) -> str:
+    """Serialize one Server-Sent Event frame."""
+    return (
+        f"event: {event_name}\\n"
+        f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\\n\\n"
+    )
+
+
+@app.post(
+    "/api/v1/analyses/stream",
+    dependencies=[Depends(require_api_auth)],
+)
+async def analyze_stream(
+    files: list[UploadFile] = File(...),
+    query: str = Form("Analyze quotations"),
+    criteria: str = Form(""),
+):
+    """Stream real processing stages while preserving the existing JSON API."""
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one quotation file is required.")
+    if len(files) > config.MAX_UPLOAD_FILES:
+        raise HTTPException(status_code=413, detail="Too many files in one request.")
+    if len(query) + len(criteria) > config.MAX_QUERY_CHARS:
+        raise HTTPException(status_code=413, detail="Query and criteria exceed the configured length limit.")
+
+    paths = []
+    names = []
+    total_size = 0
+    max_file_size = config.MAX_FILE_SIZE_MB * 1024 * 1024
+    max_total_size = config.MAX_TOTAL_UPLOAD_SIZE_MB * 1024 * 1024
+
+    try:
+        for file in files:
+            original_name = (
+                (file.filename or "upload")
+                .replace("\\\\", "/")
+                .rsplit("/", 1)[-1]
+            )
+            extension = os.path.splitext(original_name)[1].lower()
+            if extension not in config.SUPPORTED_FORMATS:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type: {extension}")
+
+            declared_size = getattr(file, "size", None)
+            if declared_size is not None and declared_size > max_file_size:
+                raise HTTPException(status_code=413, detail="An uploaded file exceeds the per-file size limit.")
+            if declared_size is not None and total_size + declared_size > max_total_size:
+                raise HTTPException(status_code=413, detail="Total upload size limit exceeded.")
+
+            fd, path = tempfile.mkstemp(suffix=extension)
+            paths.append(path)
+            file_size = 0
+            with os.fdopen(fd, "wb") as output:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    file_size += len(chunk)
+                    total_size += len(chunk)
+                    if file_size > max_file_size:
+                        raise HTTPException(status_code=413, detail="An uploaded file exceeds the per-file size limit.")
+                    if total_size > max_total_size:
+                        raise HTTPException(status_code=413, detail="Total upload size limit exceeded.")
+                    output.write(chunk)
+
+            if file_size == 0:
+                raise HTTPException(status_code=400, detail="Uploaded files cannot be empty.")
+            names.append(original_name)
+    except HTTPException:
+        for path in paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        for file in files:
+            await file.close()
+        raise
+    except Exception:
+        for path in paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        for file in files:
+            await file.close()
+        raise HTTPException(status_code=500, detail="The quotation upload could not be prepared.") from None
+
+    for file in files:
+        await file.close()
+
+    criteria_list = [
+        item.strip() for item in criteria.split(",") if item.strip()
+    ] or config.DEFAULT_CRITERIA
+
+    # Capture the request-scoped Gateway session before the streaming response
+    # outlives request middleware cleanup. The token is passed only server-side.
+    gateway_token = get_llm_gateway_token()
+    event_queue: asyncio.Queue = asyncio.Queue(maxsize=64)
+    loop = asyncio.get_running_loop()
+
+    event_queue.put_nowait((
+        "stage",
+        {
+            "sequence": 0,
+            "stage": "ingest",
+            "status": "completed",
+            "message": "Quotation documents received and upload checks passed.",
+            "occurred_at": None,
+            "metrics": {"document_count": len(names), "total_bytes": total_size},
+        },
+    ))
+
+    def publish_stage(event):
+        try:
+            loop.call_soon_threadsafe(event_queue.put_nowait, ("stage", event))
+        except RuntimeError:
+            # The browser may disconnect while the backend finishes safely.
+            pass
+
+    def run_analysis():
+        try:
+            agent = QuotationIntelligenceAgent(gateway_token=gateway_token)
+            return agent.process_documents(
+                paths,
+                query=query,
+                criteria=criteria_list,
+                stage_callback=publish_stage,
+            )
+        finally:
+            for path in paths:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    logger.warning("Could not remove a temporary quotation upload.")
+            try:
+                loop.call_soon_threadsafe(event_queue.put_nowait, None)
+            except RuntimeError:
+                pass
+
+    task = asyncio.create_task(asyncio.to_thread(run_analysis))
+
+    # Retrieve a background exception even if the browser disconnects before
+    # the stream consumer has a chance to await the processing task.
+    def consume_task_exception(completed_task):
+        if not completed_task.cancelled():
+            completed_task.exception()
+
+    task.add_done_callback(consume_task_exception)
+
+    async def event_stream():
+        yield ": QuoteSense processing stream connected\\n\\n"
+        while True:
+            queued = await event_queue.get()
+            if queued is None:
+                break
+            event_name, payload = queued
+            yield _sse_frame(event_name, payload)
+
+        try:
+            result = await task
+            result["uploaded_files"] = names
+            yield _sse_frame("result", result)
+        except DocumentProcessingLimitError as exc:
+            yield _sse_frame("error", {"code": "DOCUMENT_LIMIT", "detail": str(exc)})
+        except Exception:
+            logger.exception("Streaming quotation analysis failed")
+            yield _sse_frame(
+                "error",
+                {"code": "ANALYSIS_FAILED", "detail": "Analysis failed. Please retry or contact the administrator."},
+            )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.post(
