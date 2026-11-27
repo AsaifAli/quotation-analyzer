@@ -507,8 +507,8 @@ async def analyze(
 def _sse_frame(event_name: str, payload: dict) -> str:
     """Serialize one Server-Sent Event frame."""
     return (
-        f"event: {event_name}\\n"
-        f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\\n\\n"
+        f"event: {event_name}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
     )
 
 
@@ -539,7 +539,7 @@ async def analyze_stream(
         for file in files:
             original_name = (
                 (file.filename or "upload")
-                .replace("\\\\", "/")
+                .replace("\\", "/")
                 .rsplit("/", 1)[-1]
             )
             extension = os.path.splitext(original_name)[1].lower()
@@ -653,9 +653,15 @@ async def analyze_stream(
     task.add_done_callback(consume_task_exception)
 
     async def event_stream():
-        yield ": QuoteSense processing stream connected\\n\\n"
+        yield ": QuoteSense processing stream connected\n\n"
         while True:
-            queued = await event_queue.get()
+            try:
+                queued = await asyncio.wait_for(event_queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                if task.done():
+                    break
+                yield ": keep-alive\\n\\n"
+                continue
             if queued is None:
                 break
             event_name, payload = queued
