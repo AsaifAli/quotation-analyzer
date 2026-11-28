@@ -146,6 +146,34 @@ QUOTATION_SCHEMA = {
                     "terms_conditions": {"type": "string"},
                     "validity_period": {"type": "string"},
                     "delivery_timeline": {"type": "string"},
+                    "quote_reference": {"type": "string"},
+                    "quote_date": {"type": "string"},
+                    "subtotal": {"type": "string"},
+                    "tax_amount": {"type": "string"},
+                    "tax_included": {"type": "string"},
+                    "shipping_cost": {"type": "string"},
+                    "discount_amount": {"type": "string"},
+                    "additional_charges": {"type": "string"},
+                    "line_items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "description": {"type": "string"},
+                                "quantity": {"type": "string"},
+                                "unit": {"type": "string"},
+                                "unit_price": {"type": "string"},
+                                "total_price": {"type": "string"},
+                                "notes": {"type": "string"},
+                            },
+                            "required": ["description", "quantity", "unit", "unit_price", "total_price", "notes"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "payment_terms": {"type": "string"},
+                    "warranty": {"type": "string"},
+                    "support": {"type": "string"},
+                    "exclusions": {"type": "array", "items": {"type": "string"}},
                     "contact_info": {"type": "string"},
                 },
                 "required": [
@@ -153,7 +181,20 @@ QUOTATION_SCHEMA = {
                     "project_description",
                     "total_cost",
                     "currency",
+                    "quote_reference",
+                    "quote_date",
+                    "subtotal",
+                    "tax_amount",
+                    "tax_included",
+                    "shipping_cost",
+                    "discount_amount",
+                    "additional_charges",
+                    "line_items",
                     "key_features",
+                    "payment_terms",
+                    "warranty",
+                    "support",
+                    "exclusions",
                     "terms_conditions",
                     "validity_period",
                     "delivery_timeline",
@@ -179,6 +220,12 @@ but preserve the source representation when a value is ambiguous.
 
 Never invent missing values; use an empty string or [] for missing values.
 Keep monetary values and currency exactly grounded in the source.
+Extract itemized rows individually where available: description, quantity,
+unit, unit price, line total and notes. Keep subtotal, tax, tax inclusion,
+shipping/freight, discounts, other charges and grand total separate.
+Extract payment terms, warranty, after-sales support, and explicit exclusions.
+Do not infer that an unlisted item is excluded. Do not calculate or guess a
+grand total when the document does not state one.
 
 A document may contain one quotation, multiple quotations, or no quotation.
 Separate distinct suppliers/bids rather than merging them.

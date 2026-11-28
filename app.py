@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
 
@@ -36,6 +37,51 @@ logger = logging.getLogger(__name__)
 
 class _RequestBodyTooLarge(Exception):
     """Raised when a streamed request exceeds the configured body limit."""
+
+
+def _parse_scoring_weights(raw: str) -> dict | None:
+    """Validate optional client scoring weights at the API boundary."""
+    if not raw.strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Scoring weights must be valid JSON.") from None
+    if not isinstance(value, dict) or not value:
+        raise HTTPException(status_code=422, detail="Scoring weights must be a non-empty object.")
+    allowed = set(config.DEFAULT_WEIGHTS)
+    weights = {}
+    for key, amount in value.items():
+        if key not in allowed:
+            raise HTTPException(status_code=422, detail=f"Unknown scoring criterion: {key}.")
+        if isinstance(amount, bool):
+            raise HTTPException(status_code=422, detail=f"Weight for {key} must be a non-negative number.")
+        try:
+            number = float(amount)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=422, detail=f"Weight for {key} must be a non-negative number.") from None
+        if not math.isfinite(number) or number < 0:
+            raise HTTPException(status_code=422, detail=f"Weight for {key} must be a finite non-negative number.")
+        weights[key] = number
+    if not any(weights.values()):
+        raise HTTPException(status_code=422, detail="At least one scoring weight must be greater than zero.")
+    return weights
+
+
+def _analysis_optional_kwargs(
+    scoring_weights: dict | None,
+    do_market: bool | None,
+    market_query: str,
+) -> dict:
+    """Only pass new optional keywords when the caller supplied them."""
+    options = {}
+    if scoring_weights is not None:
+        options["weights"] = scoring_weights
+    if do_market is not None:
+        options["do_market"] = do_market
+    if market_query.strip():
+        options["market_query"] = market_query.strip()
+    return options
 
 
 class RequestBodySizeLimitMiddleware:
@@ -354,6 +400,9 @@ async def analyze(
     files: list[UploadFile] = File(...),
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
+    weights: str = Form(""),
+    do_market: bool | None = Form(None),
+    market_query: str = Form(""),
 ):
     if not files:
         raise HTTPException(
@@ -367,11 +416,12 @@ async def analyze(
             detail="Too many files in one request.",
         )
 
-    if len(query) + len(criteria) > config.MAX_QUERY_CHARS:
+    if len(query) + len(criteria) + len(market_query) > config.MAX_QUERY_CHARS:
         raise HTTPException(
             status_code=413,
-            detail="Query and criteria exceed the configured length limit.",
+            detail="Query, criteria and market scope exceed the configured length limit.",
         )
+    scoring_weights = _parse_scoring_weights(weights)
 
     paths = []
     names = []
@@ -464,6 +514,11 @@ async def analyze(
             paths,
             query=query,
             criteria=criteria_list,
+            **_analysis_optional_kwargs(
+                scoring_weights,
+                do_market,
+                market_query,
+            ),
         )
 
         result["uploaded_files"] = names
@@ -520,14 +575,18 @@ async def analyze_stream(
     files: list[UploadFile] = File(...),
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
+    weights: str = Form(""),
+    do_market: bool | None = Form(None),
+    market_query: str = Form(""),
 ):
     """Stream real processing stages while preserving the existing JSON API."""
     if not files:
         raise HTTPException(status_code=400, detail="At least one quotation file is required.")
     if len(files) > config.MAX_UPLOAD_FILES:
         raise HTTPException(status_code=413, detail="Too many files in one request.")
-    if len(query) + len(criteria) > config.MAX_QUERY_CHARS:
-        raise HTTPException(status_code=413, detail="Query and criteria exceed the configured length limit.")
+    if len(query) + len(criteria) + len(market_query) > config.MAX_QUERY_CHARS:
+        raise HTTPException(status_code=413, detail="Query, criteria and market scope exceed the configured length limit.")
+    scoring_weights = _parse_scoring_weights(weights)
 
     paths = []
     names = []
@@ -630,6 +689,11 @@ async def analyze_stream(
                 query=query,
                 criteria=criteria_list,
                 stage_callback=publish_stage,
+                **_analysis_optional_kwargs(
+                    scoring_weights,
+                    do_market,
+                    market_query,
+                ),
             )
         finally:
             for path in paths:

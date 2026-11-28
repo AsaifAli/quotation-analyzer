@@ -78,3 +78,57 @@ def test_processing_trace_exposes_only_bounded_metrics_not_supplier_content(monk
     assert "Supplier quotation" not in serialized
     assert all("metrics" in event and isinstance(event["metrics"], dict) for event in events)
     assert events[-1]["metrics"]["quotation_count"] == 1
+
+
+
+def test_opt_in_market_context_is_reported_as_a_separate_real_stage(monkeypatch):
+    agent = _agent_with_synthetic_extraction(monkeypatch)
+    events = []
+    monkeypatch.setattr(
+        agent,
+        "market_insights",
+        lambda scope=None: {
+            "status": "success",
+            "query": f"procurement pricing benchmark {scope}",
+            "insights": {"status": "success", "results": [{"title": "Example source"}]},
+        },
+    )
+    result = agent.process_documents(
+        ["synthetic-quotation.txt"],
+        query="extract",
+        do_market=True,
+        market_query="office chairs",
+        stage_callback=events.append,
+    )
+    market_events = [event for event in events if event["stage"] == "market_research"]
+    assert [event["status"] for event in market_events] == ["started", "completed"]
+    assert market_events[-1]["metrics"] == {"result_count": 1, "available": True}
+    assert result["market"]["query"].endswith("office chairs")
+
+
+def test_optional_market_search_failure_does_not_fail_quote_workflow(monkeypatch):
+    agent = _agent_with_synthetic_extraction(monkeypatch)
+
+    def fail_search(_query):
+        raise RuntimeError("synthetic provider failure")
+
+    agent.web_search.search = fail_search
+    market = agent.market_insights(scope="office chairs")
+    assert market["status"] == "success"
+    assert market["insights"]["status"] == "unavailable"
+    assert "could not be retrieved" in market["insights"]["message"]
+
+
+
+def test_explicit_market_opt_out_suppresses_automatic_keyword_lookup(monkeypatch):
+    agent = _agent_with_synthetic_extraction(monkeypatch)
+    events = []
+    result = agent.process_documents(
+        ["synthetic-quotation.txt"],
+        query="extract market pricing",
+        do_market=False,
+        market_query="office chairs",
+        stage_callback=events.append,
+    )
+    assert "market" not in result
+    assert not any(event["stage"] == "market_research" for event in events)
