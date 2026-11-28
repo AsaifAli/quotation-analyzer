@@ -1577,11 +1577,12 @@ def _render_document_coverage(result: dict) -> None:
             hide_index=True,
         )
         for issue in issues:
-            st.warning(
-                f"{issue.get('source') or 'A source file'}: "
-                f"{issue.get('message') or 'No quotation record was extracted. "
-                "Review the document and try again.'}"
+            source = issue.get("source") or "A source file"
+            message = issue.get("message") or (
+                "No quotation record was extracted. "
+                "Review the document and try again."
             )
+            st.warning(f"{source}: {message}")
 
 
 def _render_export_center(result: dict) -> None:
