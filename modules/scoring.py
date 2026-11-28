@@ -158,7 +158,7 @@ def _timeline_score(value: str | None) -> float | None:
 def _terms_score(quotation: Mapping[str, Any]) -> float:
     text = " ".join(
         str(quotation.get(key) or "")
-        for key in ("terms_conditions", "validity_period")
+        for key in ("terms_conditions", "validity_period", "payment_terms", "warranty", "support")
     )
     score = 100.0 if text else 0.0
     lowered = text.lower()
@@ -182,7 +182,7 @@ def detect_risks(
         supplier = quotation.get("supplier") or "Unknown"
         text = " ".join(
             str(quotation.get(key) or "")
-            for key in ("terms_conditions", "validity_period", "delivery_timeline")
+            for key in ("terms_conditions", "validity_period", "delivery_timeline", "payment_terms", "warranty", "support")
         ).lower()
         items: list[tuple[str, str]] = []
 
@@ -322,7 +322,10 @@ def score_quotations(
         terms = _terms_score(quotation)
 
         risk_penalty = 0.0
-        terms_text = str(quotation.get("terms_conditions") or "").lower()
+        terms_text = " ".join(
+            str(quotation.get(key) or "")
+            for key in ("terms_conditions", "payment_terms", "warranty", "support")
+        ).lower()
         if "100% upfront" in terms_text or "full payment upfront" in terms_text:
             risk_penalty += 35
         if not quotation.get("warranty") and "warranty" not in terms_text:
@@ -401,11 +404,14 @@ def build_comparison_matrix(
     highest = max(priced, key=lambda item: item[2]) if comparable and priced else None
 
     supplier_summaries = []
-    score_by_index = list(scores or [])
+    score_by_supplier = {
+        str(item.get("supplier") or "").strip().casefold(): item
+        for item in (scores or [])
+    }
     for index, quotation in enumerate(quotations):
         amount = _num(quotation.get("total_cost"))
         supplier = str(quotation.get("supplier") or f"Quotation {index + 1}")
-        score = score_by_index[index] if index < len(score_by_index) else {}
+        score = score_by_supplier.get(supplier.strip().casefold(), {})
         delta = None
         delta_percent = None
         if comparable and amount is not None and lowest is not None:
