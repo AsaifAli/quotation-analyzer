@@ -24,3 +24,8 @@ def test_streamlit_workspace_exposes_multi_quote_procurement_flow():
     assert "weights=weight_values" in main_source
     assert "do_market=do_market" in main_source
     assert "market_query=market_query.strip()" in main_source
+
+    assert '"Highest weighted score"' in source
+    assert '"ALTERNATIVE BIDS"' in source
+    assert '"DECISION CONSIDERATIONS"' in source
+    assert '"BEFORE AWARDING"' in source
