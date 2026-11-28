@@ -385,7 +385,7 @@ async def analyze(
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
     weights: str = Form(""),
-    do_market: bool = Form(False),
+    do_market: bool | None = Form(None),
     market_query: str = Form(""),
 ):
     if not files:
@@ -558,7 +558,7 @@ async def analyze_stream(
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
     weights: str = Form(""),
-    do_market: bool = Form(False),
+    do_market: bool | None = Form(None),
     market_query: str = Form(""),
 ):
     """Stream real processing stages while preserving the existing JSON API."""
