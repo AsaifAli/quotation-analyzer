@@ -38,6 +38,35 @@ class _RequestBodyTooLarge(Exception):
     """Raised when a streamed request exceeds the configured body limit."""
 
 
+def _parse_scoring_weights(raw: str) -> dict | None:
+    """Validate optional client scoring weights at the API boundary."""
+    if not raw.strip():
+        return None
+    try:
+        value = json.loads(raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="Scoring weights must be valid JSON.") from None
+    if not isinstance(value, dict) or not value:
+        raise HTTPException(status_code=422, detail="Scoring weights must be a non-empty object.")
+    allowed = set(config.DEFAULT_WEIGHTS)
+    weights = {}
+    for key, amount in value.items():
+        if key not in allowed:
+            raise HTTPException(status_code=422, detail=f"Unknown scoring criterion: {key}.")
+        if isinstance(amount, bool):
+            raise HTTPException(status_code=422, detail=f"Weight for {key} must be a non-negative number.")
+        try:
+            number = float(amount)
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=422, detail=f"Weight for {key} must be a non-negative number.") from None
+        if not __import__("math").isfinite(number) or number < 0:
+            raise HTTPException(status_code=422, detail=f"Weight for {key} must be a finite non-negative number.")
+        weights[key] = number
+    if not any(weights.values()):
+        raise HTTPException(status_code=422, detail="At least one scoring weight must be greater than zero.")
+    return weights
+
+
 class RequestBodySizeLimitMiddleware:
     """Bound upload request bodies even when Content-Length is absent.
 
@@ -354,6 +383,7 @@ async def analyze(
     files: list[UploadFile] = File(...),
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
+    weights: str = Form(""),
 ):
     if not files:
         raise HTTPException(
@@ -372,6 +402,7 @@ async def analyze(
             status_code=413,
             detail="Query and criteria exceed the configured length limit.",
         )
+    scoring_weights = _parse_scoring_weights(weights)
 
     paths = []
     names = []
@@ -464,6 +495,7 @@ async def analyze(
             paths,
             query=query,
             criteria=criteria_list,
+            weights=scoring_weights,
         )
 
         result["uploaded_files"] = names
@@ -520,6 +552,7 @@ async def analyze_stream(
     files: list[UploadFile] = File(...),
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
+    weights: str = Form(""),
 ):
     """Stream real processing stages while preserving the existing JSON API."""
     if not files:
@@ -528,6 +561,7 @@ async def analyze_stream(
         raise HTTPException(status_code=413, detail="Too many files in one request.")
     if len(query) + len(criteria) > config.MAX_QUERY_CHARS:
         raise HTTPException(status_code=413, detail="Query and criteria exceed the configured length limit.")
+    scoring_weights = _parse_scoring_weights(weights)
 
     paths = []
     names = []
@@ -629,6 +663,7 @@ async def analyze_stream(
                 paths,
                 query=query,
                 criteria=criteria_list,
+                weights=scoring_weights,
                 stage_callback=publish_stage,
             )
         finally:
