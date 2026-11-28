@@ -88,3 +88,32 @@ def test_comparison_matrix_never_converts_or_compares_different_currencies():
     assert matrix["cost_comparable"] is False
     assert matrix["lowest_price_supplier"] is None
     assert all(item["price_difference_from_lowest"] is None for item in matrix["suppliers"])
+
+
+
+def test_comparison_matrix_keeps_distinct_same_supplier_quotes_paired_with_their_scores():
+    quotations = [
+        {
+            "supplier": "Contoso",
+            "source_document": "contoso-revision-a.pdf",
+            "quote_reference": "A-100",
+            "currency": "INR",
+            "total_cost": 100000,
+        },
+        {
+            "supplier": "Contoso",
+            "source_document": "contoso-revision-b.pdf",
+            "quote_reference": "B-200",
+            "currency": "INR",
+            "total_cost": 150000,
+        },
+    ]
+    scores = score_quotations(quotations)
+    matrix = build_comparison_matrix(quotations, scores)
+    by_source = {item["source_document"]: item for item in matrix["suppliers"]}
+    assert by_source["contoso-revision-a.pdf"]["score"] == next(
+        item["score"] for item in scores if item["source_document"] == "contoso-revision-a.pdf"
+    )
+    assert by_source["contoso-revision-b.pdf"]["score"] == next(
+        item["score"] for item in scores if item["source_document"] == "contoso-revision-b.pdf"
+    )
