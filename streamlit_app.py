@@ -724,6 +724,20 @@ def _render_comparison_workspace(result: dict) -> None:
             or "Total prices are not directly comparable. Review currency and missing-price information."
         )
 
+    unpriced_quotes = [
+        item for item in offers
+        if _safe_score(item.get("total_cost")) is None
+    ]
+    if unpriced_quotes:
+        labels = ", ".join(
+            str(item.get("quote_label") or item.get("supplier") or "Unknown")
+            for item in unpriced_quotes
+        )
+        st.warning(
+            f"No numeric grand total was extracted for: {labels}. "
+            "These quotations are excluded from the total-price ranking; verify the source documents."
+        )
+
     st.markdown(
         '<div class="qs-section-kicker qs-section-spaced">QUOTE-BY-QUOTE COMPARISON</div>',
         unsafe_allow_html=True,
@@ -814,6 +828,7 @@ def _render_comparison_workspace(result: dict) -> None:
                     hide_index=True,
                 )
         st.caption(
+            "Only exact normalized item descriptions are automatically aligned; similar wording stays separate. "
             "A line item marked “not listed” is not automatically treated as excluded. "
             "Confirm scope and wording in the cited source document."
         )
