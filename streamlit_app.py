@@ -16,7 +16,7 @@ import requests
 import streamlit as st
 
 from modules.ai_agent import QuotationIntelligenceAgent
-from modules.scoring import count_risk_findings
+from modules.scoring import build_comparison_matrix, count_risk_findings
 from modules.report import analysis_json, analysis_xlsx, quotations_csv
 import config
 from ui_theme import apply_theme
@@ -624,73 +624,322 @@ def _render_summary_metrics(result: dict) -> None:
 def _render_supplier_snapshot(result: dict) -> None:
     scores = result.get("scores", []) or []
     quotes = result.get("quotations", []) or []
+    matrix = result.get("comparison_matrix") or build_comparison_matrix(quotes, scores)
+    offers = matrix.get("suppliers", []) or []
 
-    if not scores and not quotes:
+    if not offers:
         return
 
-    quote_map = {
-        _supplier_name(quote): quote
-        for quote in quotes
-    }
-
+    ranked = sorted(
+        offers,
+        key=lambda item: (
+            _safe_score(item.get("score"))
+            if _safe_score(item.get("score")) is not None
+            else -1
+        ),
+        reverse=True,
+    )
     rows = []
-
-    for rank, item in enumerate(scores or [], start=1):
-        supplier = str(item.get("supplier") or "Unknown")
-        quote = quote_map.get(supplier, {})
+    for rank, item in enumerate(ranked, start=1):
         score = _safe_score(item.get("score"))
-
-        rows.append(
-            {
-                "#": rank,
-                "Supplier": supplier,
-                "Score": (
-                    round(score, 1)
-                    if score is not None
-                    else "Not scored"
-                ),
-                "Cost": money(
-                    quote.get("total_cost"),
-                    quote.get("currency"),
-                ),
-                "Timeline": quote.get("delivery_timeline") or "—",
-                "Validity": quote.get("validity_period") or "—",
-            }
-        )
-
-    if not rows:
-        return
+        delta = item.get("percent_above_lowest")
+        rows.append({
+            "#": rank,
+            "Quotation": item.get("quote_label") or item.get("supplier") or "Unknown",
+            "Supplier": item.get("supplier") or "Unknown",
+            "Score": round(score, 1) if score is not None else "Not scored",
+            "Quoted total": money(item.get("total_cost"), item.get("currency")),
+            "vs lowest": f"{delta:.1f}% above" if delta is not None else "—",
+            "Delivery": item.get("delivery_timeline") or "—",
+            "Validity": item.get("validity_period") or "—",
+        })
 
     st.markdown(
-        '<div class="qs-section-kicker">SUPPLIER COMPARISON</div>',
+        '<div class="qs-section-kicker">SUPPLIER RANKING · ALL BIDS</div>',
         unsafe_allow_html=True,
     )
-
     st.dataframe(
         pd.DataFrame(rows),
         use_container_width=True,
         hide_index=True,
     )
 
-    cost_issue = next(
-        (
-            item
-            for item in scores
-            if item.get("cost_comparable") is False
-        ),
-        None,
-    )
-
-    if cost_issue:
-        reason = cost_issue.get(
+    if not matrix.get("cost_comparable", False):
+        reason = matrix.get(
             "cost_comparability_reason",
             "Supplier prices cannot currently be compared reliably.",
         )
-
         st.info(
-            f"Price component excluded from scoring: {reason} "
-            "Overall scores use the remaining available criteria."
+            f"Price ranking is unavailable: {reason} "
+            "No currency conversion or unlike-currency comparison is performed."
         )
+
+
+def _render_comparison_workspace(result: dict) -> None:
+    """Render the procurement matrix returned by the deterministic engine."""
+    quotations = result.get("quotations", []) or []
+    scores = result.get("scores", []) or []
+    matrix = result.get("comparison_matrix") or build_comparison_matrix(quotations, scores)
+    offers = matrix.get("suppliers", []) or []
+    line_items = matrix.get("line_items", []) or []
+    reconciliation = matrix.get("pricing_reconciliation", []) or []
+
+    if not offers:
+        st.info("No quotation comparison data is available yet.")
+        return
+
+    comparable = bool(matrix.get("cost_comparable"))
+    lowest_price = matrix.get("lowest_price")
+    lowest_quote = next(
+        (
+            item for item in offers
+            if item.get("total_cost") == lowest_price and lowest_price is not None
+        ),
+        {},
+    )
+    scored_quotes = [
+        item for item in offers
+        if _safe_score(item.get("score")) is not None
+    ]
+    best_scored_quote = max(
+        scored_quotes,
+        key=lambda item: _safe_score(item.get("score")),
+        default={},
+    )
+    best_score = _safe_score(best_scored_quote.get("score"))
+
+    metric_cols = st.columns(5, gap="small")
+    metric_cols[0].metric("Quotes compared", len(offers))
+    metric_cols[1].metric(
+        "Lowest comparable offer",
+        money(lowest_price, matrix.get("currency")) if comparable else "Not comparable",
+        help=lowest_quote.get("quote_label") or lowest_quote.get("supplier") or "",
+    )
+    metric_cols[2].metric(
+        "Highest weighted score",
+        f"{best_score:.1f} / 100" if best_score is not None else "Not scored",
+        help=best_scored_quote.get("quote_label") or best_scored_quote.get("supplier") or "",
+    )
+    metric_cols[3].metric(
+        "Price spread",
+        money(matrix.get("price_spread"), matrix.get("currency"))
+        if comparable and matrix.get("price_spread") is not None
+        else "—",
+    )
+    metric_cols[4].metric("Distinct line items", len(line_items))
+
+    if comparable:
+        st.success(
+            f"Total prices can be compared in {matrix.get('currency')}. "
+            "The lowest offer is a price reference, not an automatic award decision."
+        )
+    else:
+        st.warning(
+            matrix.get("cost_comparability_reason")
+            or "Total prices are not directly comparable. Review currency and missing-price information."
+        )
+
+    if (
+        lowest_quote
+        and best_scored_quote
+        and lowest_quote.get("quote_label") != best_scored_quote.get("quote_label")
+    ):
+        st.info(
+            "The lowest-priced quotation and highest-scoring quotation are different. "
+            "Review the commercial trade-offs before selecting a supplier."
+        )
+
+    unpriced_quotes = [
+        item for item in offers
+        if _safe_score(item.get("total_cost")) is None
+    ]
+    if unpriced_quotes:
+        labels = ", ".join(
+            str(item.get("quote_label") or item.get("supplier") or "Unknown")
+            for item in unpriced_quotes
+        )
+        st.warning(
+            f"No numeric grand total was extracted for: {labels}. "
+            "These quotations are excluded from the total-price ranking; verify the source documents."
+        )
+
+    st.markdown(
+        '<div class="qs-section-kicker qs-section-spaced">QUOTE-BY-QUOTE COMPARISON</div>',
+        unsafe_allow_html=True,
+    )
+    supplier_rows = []
+    for item in offers:
+        delta = item.get("percent_above_lowest")
+        supplier_rows.append({
+            "Quotation": item.get("quote_label") or item.get("supplier") or "Unknown",
+            "Supplier": item.get("supplier") or "Unknown",
+            "Reference": item.get("quote_reference") or "—",
+            "Source file": item.get("source_document") or "—",
+            "Quoted total": money(item.get("total_cost"), item.get("currency")),
+            "vs lowest": f"{delta:.1f}% above" if delta is not None else "—",
+            "Score": (
+                f"{_safe_score(item.get('score')):.1f} / 100"
+                if _safe_score(item.get("score")) is not None
+                else "Not scored"
+            ),
+            "Delivery": item.get("delivery_timeline") or "—",
+            "Payment terms": item.get("payment_terms") or "—",
+            "Warranty": item.get("warranty") or "—",
+            "Support": item.get("support") or "—",
+            "Validity": item.get("validity_period") or "—",
+        })
+    st.dataframe(
+        pd.DataFrame(supplier_rows),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.markdown(
+        '<div class="qs-section-kicker qs-section-spaced">LINE-ITEM & SCOPE COMPARISON</div>',
+        unsafe_allow_html=True,
+    )
+    if not line_items:
+        st.info(
+            "No itemized rows were extracted. Supplier totals and commercial terms "
+            "are still available above; check the source quotations for missing scope."
+        )
+    else:
+        line_summary = []
+        line_offer_rows = []
+        for item in line_items:
+            item_offers = item.get("offers", []) or []
+            currency = next(
+                (offer.get("currency") for offer in item_offers if offer.get("currency")),
+                "",
+            )
+            line_summary.append({
+                "Item / scope": item.get("description") or "Unlabelled item",
+                "Offers found": len(item_offers),
+                "Unit prices comparable": "Yes" if item.get("unit_price_comparable") else "No",
+                "Lowest unit price": (
+                    money(item.get("lowest_unit_price"), currency)
+                    if item.get("lowest_unit_price") is not None else "—"
+                ),
+                "Highest unit price": (
+                    money(item.get("highest_unit_price"), currency)
+                    if item.get("highest_unit_price") is not None else "—"
+                ),
+                "Not listed in quotation(s)": ", ".join(item.get("not_listed_by") or []) or "—",
+            })
+            for offer in item_offers:
+                line_offer_rows.append({
+                    "Item / scope": item.get("description"),
+                    "Quotation": offer.get("quote_label") or offer.get("supplier"),
+                    "Supplier": offer.get("supplier"),
+                    "Reference": offer.get("quote_reference") or "—",
+                    "Quantity": offer.get("quantity"),
+                    "Unit": offer.get("unit") or "—",
+                    "Unit price": money(offer.get("unit_price"), offer.get("currency")),
+                    "Line total": money(offer.get("total_price"), offer.get("currency")),
+                    "Notes": offer.get("notes") or "—",
+                    "Comparable unit price": "Yes" if item.get("unit_price_comparable") else "No",
+                })
+
+        st.dataframe(
+            pd.DataFrame(line_summary),
+            use_container_width=True,
+            hide_index=True,
+        )
+        if line_offer_rows:
+            with st.expander("Inspect every extracted line-item offer", expanded=False):
+                st.dataframe(
+                    pd.DataFrame(line_offer_rows),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+        st.caption(
+            "Only exact normalized item descriptions are automatically aligned; similar wording stays separate. "
+            "A line item marked “not listed” is not automatically treated as excluded. "
+            "Confirm scope and wording in the cited source document."
+        )
+
+    st.markdown(
+        '<div class="qs-section-kicker qs-section-spaced">PRICE RECONCILIATION</div>',
+        unsafe_allow_html=True,
+    )
+    if reconciliation:
+        reconciliation_rows = []
+        for item in reconciliation:
+            currency = item.get("currency")
+            tax_included = item.get("tax_included")
+            reconciliation_rows.append({
+                "Quotation": item.get("quote_label") or item.get("supplier") or "Unknown",
+                "Supplier": item.get("supplier") or "Unknown",
+                "Reference": item.get("quote_reference") or "—",
+                "Subtotal": money(item.get("subtotal"), currency),
+                "Tax": money(item.get("tax_amount"), currency),
+                "Shipping": money(item.get("shipping_cost"), currency),
+                "Discount": money(item.get("discount_amount"), currency),
+                "Other charges": money(item.get("additional_charges"), currency),
+                "Stated total": money(item.get("stated_total"), currency),
+                "Calculated total": money(
+                    item.get("calculated_total_from_reported_components"), currency
+                ) if item.get("calculated_total_from_reported_components") is not None else "—",
+                "Difference": money(item.get("difference"), currency)
+                if item.get("difference") is not None else "—",
+                "Tax treatment": (
+                    "Included" if tax_included is True
+                    else "Excluded" if tax_included is False
+                    else "Not stated"
+                ),
+                "Check": str(item.get("status") or "unknown").replace("_", " ").title(),
+            })
+        st.dataframe(
+            pd.DataFrame(reconciliation_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "Reconciliation uses only components explicitly reported in each quotation. "
+            "Partial checks are not treated as a confirmed match."
+        )
+    else:
+        st.info("There is not enough stated price-component data to reconcile totals.")
+
+
+def _render_market_context(result: dict) -> None:
+    market = result.get("market") or {}
+    if not market:
+        st.info(
+            "Market context was not requested for this run. "
+            "It is optional and never replaces the supplier's own quotation evidence."
+        )
+        return
+
+    insights = market.get("insights") or {}
+    if insights.get("status") != "success":
+        st.info(
+            insights.get("message")
+            or "External market context is unavailable. The supplier comparison remains valid."
+        )
+        return
+
+    sources = insights.get("results") or []
+    if not sources:
+        st.info("The market lookup completed but returned no source results.")
+        return
+
+    st.caption(
+        "External context is directional only. Verify scope, geography, tax, date and "
+        "product specifications before treating a market reference as comparable."
+    )
+    for item in sources:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "Market reference")
+        content = str(item.get("content") or item.get("snippet") or "")
+        url = str(item.get("url") or "")
+        with st.container(border=True):
+            st.markdown(f"**{title}**")
+            if content:
+                st.write(content)
+            if url.startswith(("https://", "http://")):
+                st.link_button("Open source", url)
 
 
 def _evidence_confidence(result: dict) -> tuple[str, str]:
@@ -1037,7 +1286,11 @@ def _render_decision_cockpit(result: dict) -> None:
     )
 
 
-def _render_recommendation(result: dict) -> None:
+def _render_recommendation(
+    result: dict,
+    *,
+    show_award_checklist: bool = True,
+) -> None:
     rec = (
         (result.get("recommendation", {}) or {})
         .get("recommendations", {})
@@ -1078,7 +1331,67 @@ def _render_recommendation(result: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    with st.expander("Why this supplier?", expanded=True):
+    matrix_offers = (
+        (result.get("comparison_matrix") or {}).get("suppliers")
+        or []
+    )
+    recommended_bids = [
+        item for item in matrix_offers
+        if str(item.get("supplier") or "").strip().casefold()
+        == str(primary.get("supplier") or "").strip().casefold()
+    ]
+    if len(recommended_bids) > 1:
+        quote_labels = ", ".join(
+            str(item.get("quote_label") or item.get("supplier") or "Bid")
+            for item in recommended_bids
+        )
+        st.info(
+            f"The recommendation is supplier-level. Multiple bids from {primary.get('supplier')} "
+            f"are present ({quote_labels}); compare their individual scores and scope before choosing a revision."
+        )
+
+    alternatives = rec.get("alternatives", []) or []
+    if alternatives:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">ALTERNATIVE BIDS</div>',
+            unsafe_allow_html=True,
+        )
+        for index, alternative in enumerate(alternatives, start=1):
+            if not isinstance(alternative, dict):
+                continue
+            alternative_supplier = str(
+                alternative.get("supplier") or f"Alternative {index}"
+            )
+            alternative_reason = str(
+                alternative.get("reason") or "No additional explanation was provided."
+            )
+            confidence = str(alternative.get("confidence") or "Not stated")
+            with st.container(border=True):
+                st.markdown(f"**{index}. {alternative_supplier}**")
+                st.write(alternative_reason)
+                st.caption(f"Qualitative confidence: {confidence}")
+
+    risk_assessment = rec.get("risk_assessment", []) or []
+    if risk_assessment:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">DECISION CONSIDERATIONS</div>',
+            unsafe_allow_html=True,
+        )
+        for item in risk_assessment:
+            if item is not None and str(item).strip():
+                st.warning(str(item))
+
+    action_items = rec.get("action_items", []) or []
+    if action_items and show_award_checklist:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">BEFORE AWARDING</div>',
+            unsafe_allow_html=True,
+        )
+        for index, item in enumerate(action_items, start=1):
+            if item is not None and str(item).strip():
+                st.checkbox(str(item), key=f"qs-award-check-{index}")
+
+    with st.expander("Inspect full recommendation payload", expanded=False):
         st.json(rec)
 
 
@@ -1152,6 +1465,48 @@ def _render_risks(result: dict) -> None:
                 """,
                 unsafe_allow_html=True,
             )
+
+    anomalies = result.get("price_anomalies", []) or []
+    if anomalies:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">PRICE ANOMALIES</div>',
+            unsafe_allow_html=True,
+        )
+        anomaly_rows = []
+        for anomaly in anomalies:
+            deviation = _safe_score(anomaly.get("deviation_percent"))
+            direction = str(anomaly.get("direction") or "unknown").title()
+            anomaly_rows.append({
+                "Supplier": anomaly.get("supplier") or "Unknown",
+                "Quoted price": money(
+                    anomaly.get("total_cost"), anomaly.get("currency")
+                ),
+                "Comparison median": money(
+                    anomaly.get("median_cost"), anomaly.get("currency")
+                ),
+                "Deviation": (
+                    f"{abs(deviation):.1f}% {direction.lower()}"
+                    if deviation is not None else "—"
+                ),
+                "Review": (
+                    "Check scope, quantity and specifications"
+                    if direction.lower() == "high"
+                    else "Confirm unusually low price and omissions"
+                    if direction.lower() == "low"
+                    else "Manual review required"
+                ),
+            })
+        st.dataframe(
+            pd.DataFrame(anomaly_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "An anomaly is a prompt for human review, not proof of overpricing, "
+            "underpricing or supplier misconduct."
+        )
+    else:
+        st.caption("No eligible price outliers were detected in comparable quotations.")
 
     if isinstance(validation, dict):
         validation = validation.get("validation", []) or []
@@ -1323,6 +1678,54 @@ def main():
             ],
         )
 
+        with st.expander("Scoring weights", expanded=False):
+            st.caption(
+                "Set the relative importance of each factor. QuoteSense "
+                "normalizes these values before deterministic scoring."
+            )
+            weight_values = {}
+            for criterion, default_weight in config.DEFAULT_WEIGHTS.items():
+                weight_values[criterion] = st.slider(
+                    criterion.replace("_", " ").title(),
+                    min_value=0,
+                    max_value=100,
+                    value=int(round(default_weight * 100)),
+                    step=5,
+                    format="%d%%",
+                    key=f"qs-weight-{criterion}",
+                ) / 100
+            weight_total = sum(weight_values.values())
+            if weight_total > 0:
+                effective = {
+                    key: value / weight_total
+                    for key, value in weight_values.items()
+                }
+                st.caption(
+                    "Effective mix · "
+                    + " · ".join(
+                        f"{key.title()} {value:.0%}"
+                        for key, value in effective.items()
+                    )
+                )
+            else:
+                st.warning("Set at least one scoring weight above zero.")
+
+        do_market = st.checkbox(
+            "Include optional market context",
+            value=False,
+            help="Adds external references where the server-side market-search provider is configured.",
+        )
+        market_query = st.text_input(
+            "Market category / region",
+            placeholder="e.g. enterprise printers, India",
+            disabled=not do_market,
+        )
+        if do_market and not config.TAVILY_API_KEY:
+            st.caption(
+                "No server-side market-search key is configured. "
+                "Quotation analysis will still run without external context."
+            )
+
         run = st.button(
             "🚀 Analyze quotations",
             type="primary",
@@ -1468,6 +1871,20 @@ def main():
         max_file_bytes=config.MAX_FILE_SIZE_MB * 1024 * 1024,
         max_total_bytes=config.MAX_TOTAL_UPLOAD_SIZE_MB * 1024 * 1024,
     )
+    if uploaded:
+        with st.expander(f"Review uploaded files · {len(uploaded)} selected", expanded=True):
+            st.dataframe(
+                pd.DataFrame([
+                    {
+                        "File": item.name,
+                        "Format": os.path.splitext(item.name)[1].upper().lstrip("."),
+                        "Size": f"{getattr(item, 'size', 0) / (1024 * 1024):.2f} MB",
+                    }
+                    for item in uploaded
+                ]),
+                use_container_width=True,
+                hide_index=True,
+            )
     if upload_error and not run:
         st.error(upload_error)
 
@@ -1538,6 +1955,9 @@ def main():
         elif upload_error:
             st.error(upload_error)
 
+        elif sum(weight_values.values()) <= 0:
+            st.error("At least one scoring weight must be greater than zero.")
+
         else:
             paths = []
             metadata = []
@@ -1577,6 +1997,9 @@ def main():
                         paths,
                         query=query,
                         criteria=criteria,
+                        weights=weight_values,
+                        do_market=do_market,
+                        market_query=market_query.strip(),
                     )
 
                     progress.progress(
@@ -1585,6 +2008,11 @@ def main():
                     )
 
                     result["uploaded_files"] = metadata
+                    result["analysis_settings"] = {
+                        "criteria": list(criteria),
+                        "weights": result.get("weights") or weight_values,
+                        "market_context_requested": bool(do_market),
+                    }
                     st.session_state["result"] = result
 
                     progress.progress(
@@ -1660,18 +2088,32 @@ def main():
 
     tabs = st.tabs(
         [
-            "Decision Overview",
+            "Decision",
+            "Compare",
             "Quotations",
             "Scoring",
             "Risks & Validation",
             "Recommendation",
+            "Market Context",
             "Evidence",
             "Raw",
         ]
     )
 
     with tabs[0]:
-        _render_recommendation(result)
+        _render_recommendation(result, show_award_checklist=False)
+
+        if result.get("analysis_settings"):
+            with st.expander("Analysis settings used", expanded=False):
+                st.json(result["analysis_settings"])
+
+        if result.get("processing_trace"):
+            with st.expander("Processing timeline", expanded=False):
+                st.dataframe(
+                    pd.DataFrame(result["processing_trace"]),
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
         if result.get("metrics"):
             with st.expander(
@@ -1681,30 +2123,65 @@ def main():
                 st.json(result["metrics"])
 
     with tabs[1]:
-        quotes = result.get("quotations", [])
+        _render_comparison_workspace(result)
 
-        rows = [
-            {
+    with tabs[2]:
+        quotes = result.get("quotations", []) or []
+        matrix = result.get("comparison_matrix") or build_comparison_matrix(
+            quotes, result.get("scores", []) or []
+        )
+        quote_rows = matrix.get("suppliers", []) or []
+        rows = []
+        for index, quote in enumerate(quotes):
+            comparison = quote_rows[index] if index < len(quote_rows) else {}
+            rows.append({
+                "Quotation": comparison.get("quote_label") or _supplier_name(quote),
                 "Supplier": _supplier_name(quote),
-                "Cost": money(
-                    quote.get("total_cost"),
-                    quote.get("currency"),
+                "Reference": quote.get("quote_reference") or "—",
+                "Source file": quote.get("source_document") or "—",
+                "Quoted total": money(quote.get("total_cost"), quote.get("currency")),
+                "Subtotal": money(quote.get("subtotal"), quote.get("currency")),
+                "Tax": money(quote.get("tax_amount"), quote.get("currency")),
+                "Tax included": (
+                    "Yes" if quote.get("tax_included") is True
+                    else "No" if quote.get("tax_included") is False
+                    else "Not stated"
                 ),
-                "Timeline": quote.get("delivery_timeline") or "—",
+                "Shipping": money(quote.get("shipping_cost"), quote.get("currency")),
+                "Discount": money(quote.get("discount_amount"), quote.get("currency")),
+                "Payment terms": quote.get("payment_terms") or quote.get("terms_conditions") or "—",
+                "Warranty": quote.get("warranty") or "—",
+                "Support": quote.get("support") or "—",
+                "Delivery": quote.get("delivery_timeline") or "—",
                 "Validity": quote.get("validity_period") or "—",
-                "Features": ", ".join(
-                    quote.get("key_features", []) or []
-                ),
-            }
-            for quote in quotes
-        ]
-
+                "Exclusions": ", ".join(quote.get("exclusions") or []) or "—",
+                "Line items": len(quote.get("line_items") or []),
+            })
         if rows:
             st.dataframe(
                 pd.DataFrame(rows),
                 use_container_width=True,
                 hide_index=True,
             )
+
+        for index, quote in enumerate(quotes):
+            comparison = quote_rows[index] if index < len(quote_rows) else {}
+            label = comparison.get("quote_label") or _supplier_name(quote)
+            with st.expander(f"Inspect source quotation · {label}"):
+                st.write({
+                    "Source file": quote.get("source_document"),
+                    "Quote reference": quote.get("quote_reference"),
+                    "Project / scope": quote.get("project_description"),
+                    "Additional charges": quote.get("additional_charges"),
+                    "Terms and conditions": quote.get("terms_conditions"),
+                    "Exclusions": quote.get("exclusions") or [],
+                })
+                if quote.get("line_items"):
+                    st.dataframe(
+                        pd.DataFrame(quote.get("line_items") or []),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
         st.download_button(
             "Download extracted quotations",
@@ -1714,9 +2191,21 @@ def main():
             icon=":material/download:",
         )
 
-    with tabs[2]:
+    with tabs[3]:
         scores = result.get("scores", [])
-
+        applied_weights = result.get("weights") or (
+            scores[0].get("weights", {}) if scores else {}
+        )
+        if applied_weights:
+            st.markdown("**Applied scoring weights**")
+            st.dataframe(
+                pd.DataFrame([
+                    {"Criterion": key.title(), "Effective weight": f"{value:.0%}"}
+                    for key, value in applied_weights.items()
+                ]),
+                use_container_width=True,
+                hide_index=True,
+            )
         if scores:
             st.dataframe(
                 pd.DataFrame(scores),
@@ -1731,16 +2220,19 @@ def main():
         else:
             st.info("No scoring records returned.")
 
-    with tabs[3]:
+    with tabs[4]:
         _render_risks(result)
 
-    with tabs[4]:
+    with tabs[5]:
         _render_recommendation(result)
 
-    with tabs[5]:
+    with tabs[6]:
+        _render_market_context(result)
+
+    with tabs[7]:
         _render_evidence(result)
 
-    with tabs[6]:
+    with tabs[8]:
         st.json(result)
 
 

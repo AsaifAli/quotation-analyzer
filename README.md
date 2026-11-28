@@ -14,7 +14,13 @@ The system deliberately separates probabilistic LLM extraction/reasoning from de
 - **Scoring breakdown:** deterministic criteria and their contributions are presented explicitly rather than hiding the ranking logic behind an LLM response.
 - **Why-this-supplier-won:** strongest scoring factors are surfaced as concise decision reasons.
 - **Supplier comparison:** multi-quotation analysis is presented as a comparison workspace rather than a single oversized chart.
-- **Risk review:** material commercial risks are elevated into the main decision view while detailed evidence remains available.
+- **Quote-by-quote comparison:** every uploaded bid remains a separate row, including revisions or multiple offers from the same supplier; totals are compared only when currencies are directly comparable.
+- **Line-item and scope comparison:** matching extracted items show quantities, units, unit prices, line totals and quotations where an item was not listed. Similar-but-not-identical descriptions remain separate for human review.
+- **Price reconciliation:** reported subtotal, tax, shipping, discounts and additional charges are checked against the stated total, with partial-data states kept distinct from confirmed matches.
+- **Configurable scoring:** users can adjust the relative importance of cost, completeness, timeline, terms and risk; the engine normalizes the mix and keeps the final score deterministic.
+- **Optional market context:** category/region references can be requested when the server-side search provider is configured; external snippets are directional context, not a substitute for quote evidence.
+- **Decision exports:** Excel includes supplier comparison, line items, price reconciliation and applied weights; CSV preserves quote identity and commercial terms.
+- **Risk review:** material commercial risks and eligible price anomalies are elevated into the main decision view while detailed evidence remains available.
 - **Results hierarchy:** overview and evidence come before raw/debug output.
 - **Polished procurement workspace:** criteria chips, upload zone, readiness/status strip, sidebar workflow, and theme-aware UI were refined for a professional decision-cockpit experience.
 - **One-time portfolio session handoff:** QuoteSense exchanges a short-lived launch code server-side and keeps the resulting bearer token in Streamlit session state, not in the browser URL.

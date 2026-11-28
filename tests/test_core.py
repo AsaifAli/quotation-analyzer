@@ -215,6 +215,7 @@ def test_price_anomalies_require_comparable_currencies():
     assert len(anomalies) == 1
     assert anomalies[0]["supplier"] == "C"
     assert anomalies[0]["direction"] == "high"
+    assert anomalies[0]["currency"] == "USD"
 
 
 def test_risk_counter_ignores_empty_supplier_records():
