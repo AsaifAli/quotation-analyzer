@@ -68,6 +68,22 @@ def _parse_scoring_weights(raw: str) -> dict | None:
     return weights
 
 
+def _analysis_optional_kwargs(
+    scoring_weights: dict | None,
+    do_market: bool | None,
+    market_query: str,
+) -> dict:
+    """Only pass new optional keywords when the caller supplied them."""
+    options = {}
+    if scoring_weights is not None:
+        options["weights"] = scoring_weights
+    if do_market is not None:
+        options["do_market"] = do_market
+    if market_query.strip():
+        options["market_query"] = market_query.strip()
+    return options
+
+
 class RequestBodySizeLimitMiddleware:
     """Bound upload request bodies even when Content-Length is absent.
 
@@ -498,9 +514,11 @@ async def analyze(
             paths,
             query=query,
             criteria=criteria_list,
-            weights=scoring_weights,
-            do_market=do_market,
-            market_query=market_query,
+            **_analysis_optional_kwargs(
+                scoring_weights,
+                do_market,
+                market_query,
+            ),
         )
 
         result["uploaded_files"] = names
@@ -670,10 +688,12 @@ async def analyze_stream(
                 paths,
                 query=query,
                 criteria=criteria_list,
-                weights=scoring_weights,
-                do_market=do_market,
-                market_query=market_query,
                 stage_callback=publish_stage,
+                **_analysis_optional_kwargs(
+                    scoring_weights,
+                    do_market,
+                    market_query,
+                ),
             )
         finally:
             for path in paths:
