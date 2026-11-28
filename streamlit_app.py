@@ -1362,6 +1362,48 @@ def _render_risks(result: dict) -> None:
                 unsafe_allow_html=True,
             )
 
+    anomalies = result.get("price_anomalies", []) or []
+    if anomalies:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">PRICE ANOMALIES</div>',
+            unsafe_allow_html=True,
+        )
+        anomaly_rows = []
+        for anomaly in anomalies:
+            deviation = _safe_score(anomaly.get("deviation_percent"))
+            direction = str(anomaly.get("direction") or "unknown").title()
+            anomaly_rows.append({
+                "Supplier": anomaly.get("supplier") or "Unknown",
+                "Quoted price": money(
+                    anomaly.get("total_cost"), anomaly.get("currency")
+                ),
+                "Comparison median": money(
+                    anomaly.get("median_cost"), anomaly.get("currency")
+                ),
+                "Deviation": (
+                    f"{abs(deviation):.1f}% {direction.lower()}"
+                    if deviation is not None else "—"
+                ),
+                "Review": (
+                    "Check scope, quantity and specifications"
+                    if direction.lower() == "high"
+                    else "Confirm unusually low price and omissions"
+                    if direction.lower() == "low"
+                    else "Manual review required"
+                ),
+            })
+        st.dataframe(
+            pd.DataFrame(anomaly_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.caption(
+            "An anomaly is a prompt for human review, not proof of overpricing, "
+            "underpricing or supplier misconduct."
+        )
+    else:
+        st.caption("No eligible price outliers were detected in comparable quotations.")
+
     if isinstance(validation, dict):
         validation = validation.get("validation", []) or []
 
