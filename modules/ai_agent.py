@@ -127,19 +127,51 @@ class QuotationIntelligenceAgent:
         document_path: str,
     ) -> Dict[str, Any]:
         started = time.perf_counter()
-
         data = self.processor.extract(document_path)
 
-        # The document is untrusted user content.
-        # Trusted extraction instructions remain in the system prompt.
-        extracted = self.llm.generate_json(
-            data["text"],
-            system=config.QUOTATION_EXTRACTION_PROMPT,
-            schema=config.QUOTATION_SCHEMA,
-        )
+        # Some models occasionally return a valid but empty JSON envelope on
+        # their first pass. Do not silently drop that source from a multi-file
+        # comparison: run one focused recovery pass for this document.
+        parsed = ExtractionResult(quotations=[])
+        extraction_attempts = 0
+        extraction_warning = None
+        readable_text = str(data.get("text") or "").strip()
 
-        normalized = normalize_extraction_payload(extracted)
-        parsed = ExtractionResult.model_validate(normalized)
+        if not readable_text:
+            extraction_warning = (
+                "No readable text was extracted from this file. "
+                "For scanned PDFs, verify that OCR is available on the app host."
+            )
+        else:
+            for attempt in range(2):
+                extraction_attempts += 1
+                system_prompt = config.QUOTATION_EXTRACTION_PROMPT
+                if attempt == 1:
+                    system_prompt += (
+                        "\n\nRECOVERY PASS: The first pass returned no quotation records. "
+                        "Re-examine the entire supplied source carefully. If it contains "
+                        "a supplier quote, bid, estimate, proposal or commercial offer, "
+                        "extract it now. Look for supplier identity, reference numbers, "
+                        "currency, totals, line items and commercial terms even when "
+                        "the document uses unusual headings. Return every distinct bid "
+                        "found in this source. Do not invent missing values."
+                    )
+
+                extracted = self.llm.generate_json(
+                    data["text"],
+                    system=system_prompt,
+                    schema=config.QUOTATION_SCHEMA,
+                )
+                normalized = normalize_extraction_payload(extracted)
+                parsed = ExtractionResult.model_validate(normalized)
+                if parsed.quotations:
+                    break
+
+            if not parsed.quotations:
+                extraction_warning = (
+                    "No quotation could be extracted from this file after "
+                    "the initial pass and one recovery pass."
+                )
 
         quotations = [
             self._attach_evidence(
@@ -157,6 +189,10 @@ class QuotationIntelligenceAgent:
         return {
             "source": data["source"],
             "quotations": quotations,
+            "quotation_count": len(quotations),
+            "extraction_status": "extracted" if quotations else "needs_review",
+            "extraction_attempts": extraction_attempts,
+            "extraction_warning": extraction_warning,
             "evidence": data["evidence"],
             "truncated": data["truncated"],
             "characters": data["characters"],
@@ -181,6 +217,14 @@ class QuotationIntelligenceAgent:
         stage_callback=None,
         market_query=None,
     ):
+        # Treat each call as an isolated batch. This also protects callers that
+        # reuse an agent instance across analyses from stale quotations.
+        self.state = AgentState()
+        if isinstance(document_paths, (str, bytes)) or hasattr(document_paths, "__fspath__"):
+            document_paths = [document_paths]
+        else:
+            document_paths = list(document_paths or [])
+
         started = time.perf_counter()
         trace = []
         current_stage = ["processing"]
@@ -415,6 +459,15 @@ class QuotationIntelligenceAgent:
         result = {
             "status": "success",
             "documents": documents,
+            "extraction_issues": [
+                {
+                    "source": document.get("source"),
+                    "status": document.get("extraction_status") or "needs_review",
+                    "message": document.get("extraction_warning"),
+                }
+                for document in documents
+                if not document.get("quotations")
+            ],
             "quotations": quotations,
             "validation": self.state.validation,
             "scores": self.state.scores,
@@ -431,6 +484,14 @@ class QuotationIntelligenceAgent:
             "metrics": {
                 "document_count": len(documents),
                 "quotation_count": len(quotations),
+                "extraction_recovery_count": sum(
+                    max(0, int(document.get("extraction_attempts") or 0) - 1)
+                    for document in documents
+                ),
+                "documents_needing_review": sum(
+                    not bool(document.get("quotations"))
+                    for document in documents
+                ),
                 "pipeline_seconds": round(
                     time.perf_counter() - started,
                     3,
