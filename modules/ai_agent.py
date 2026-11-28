@@ -179,6 +179,7 @@ class QuotationIntelligenceAgent:
         do_market=False,
         analyze=True,
         stage_callback=None,
+        market_query=None,
     ):
         started = time.perf_counter()
         trace = []
@@ -206,6 +207,7 @@ class QuotationIntelligenceAgent:
                 do_market=do_market,
                 analyze=analyze,
                 stage_emitter=emit,
+                market_query=market_query,
             )
             if result.get("status") == "success":
                 result["processing_trace"] = trace
@@ -250,6 +252,7 @@ class QuotationIntelligenceAgent:
         do_market=False,
         analyze=True,
         stage_emitter=None,
+        market_query=None,
     ):
         if not document_paths:
             return {
@@ -306,6 +309,8 @@ class QuotationIntelligenceAgent:
                 str(quotation.get("supplier")).strip().lower(),
                 quotation.get("total_cost"),
                 str(quotation.get("currency")).upper(),
+                str(quotation.get("quote_reference") or "").strip().lower(),
+                str(quotation.get("source_document") or "").strip().lower(),
             )
 
             if key not in seen:
@@ -424,7 +429,26 @@ class QuotationIntelligenceAgent:
             )
             or do_market
         ):
-            result["market"] = self.market_insights()
+            if stage_emitter:
+                stage_emitter(
+                    "market_research",
+                    "started",
+                    "Checking optional external market context. Source quotations remain the basis for supplier comparison.",
+                )
+            result["market"] = self.market_insights(scope=market_query)
+            if stage_emitter:
+                insight_data = result["market"].get("insights") or {}
+                stage_emitter(
+                    "market_research",
+                    "completed",
+                    "External context lookup completed; inspect source links and do not treat web snippets as verified supplier prices.",
+                    {
+                        "result_count": len(insight_data.get("results") or [])
+                        if isinstance(insight_data, dict) else 0,
+                        "available": isinstance(insight_data, dict)
+                        and insight_data.get("status") == "success",
+                    },
+                )
 
         if analyze and (
             any(
@@ -568,13 +592,22 @@ class QuotationIntelligenceAgent:
             "risks": self.state.risks,
         }
 
-    def market_insights(self, location=None):
-        query = f"procurement quotation pricing benchmark {location or ''}".strip()
-
+    def market_insights(self, location=None, scope=None):
+        """Fetch optional external context without making it a dependency."""
+        query = f"procurement pricing benchmark {scope or ''} {location or ''}".strip()
+        try:
+            insights = self.web_search.search(query)
+        except Exception:
+            logger.warning("market_context_lookup_failed", exc_info=True)
+            insights = {
+                "status": "unavailable",
+                "message": "External market context could not be retrieved. The quotation comparison is still complete.",
+                "results": [],
+            }
         return {
             "status": "success",
             "query": query,
-            "insights": self.web_search.search(query),
+            "insights": insights,
         }
 
     def process(
