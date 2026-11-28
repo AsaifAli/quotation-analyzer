@@ -278,6 +278,7 @@ def detect_price_anomalies(
             anomalies.append(
                 {
                     "supplier": quotation.get("supplier") or "Unknown",
+                    "currency": quotation.get("currency"),
                     "total_cost": value,
                     "median_cost": median,
                     "deviation_percent": round(deviation, 1),
