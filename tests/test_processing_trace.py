@@ -117,3 +117,18 @@ def test_optional_market_search_failure_does_not_fail_quote_workflow(monkeypatch
     assert market["status"] == "success"
     assert market["insights"]["status"] == "unavailable"
     assert "could not be retrieved" in market["insights"]["message"]
+
+
+
+def test_explicit_market_opt_out_suppresses_automatic_keyword_lookup(monkeypatch):
+    agent = _agent_with_synthetic_extraction(monkeypatch)
+    events = []
+    result = agent.process_documents(
+        ["synthetic-quotation.txt"],
+        query="extract market pricing",
+        do_market=False,
+        market_query="office chairs",
+        stage_callback=events.append,
+    )
+    assert "market" not in result
+    assert not any(event["stage"] == "market_research" for event in events)
