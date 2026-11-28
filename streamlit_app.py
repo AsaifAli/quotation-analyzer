@@ -739,6 +739,16 @@ def _render_comparison_workspace(result: dict) -> None:
             or "Total prices are not directly comparable. Review currency and missing-price information."
         )
 
+    if (
+        lowest_quote
+        and best_scored_quote
+        and lowest_quote.get("quote_label") != best_scored_quote.get("quote_label")
+    ):
+        st.info(
+            "The lowest-priced quotation and highest-scoring quotation are different. "
+            "Review the commercial trade-offs before selecting a supplier."
+        )
+
     unpriced_quotes = [
         item for item in offers
         if _safe_score(item.get("total_cost")) is None
@@ -1320,6 +1330,25 @@ def _render_recommendation(
         """,
         unsafe_allow_html=True,
     )
+
+    matrix_offers = (
+        (result.get("comparison_matrix") or {}).get("suppliers")
+        or []
+    )
+    recommended_bids = [
+        item for item in matrix_offers
+        if str(item.get("supplier") or "").strip().casefold()
+        == str(primary.get("supplier") or "").strip().casefold()
+    ]
+    if len(recommended_bids) > 1:
+        quote_labels = ", ".join(
+            str(item.get("quote_label") or item.get("supplier") or "Bid")
+            for item in recommended_bids
+        )
+        st.info(
+            f"The recommendation is supplier-level. Multiple bids from {primary.get('supplier')} "
+            f"are present ({quote_labels}); compare their individual scores and scope before choosing a revision."
+        )
 
     alternatives = rec.get("alternatives", []) or []
     if alternatives:
