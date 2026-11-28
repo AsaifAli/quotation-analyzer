@@ -387,6 +387,43 @@ def score_quotations(
 
 
 
+
+
+def _comparison_quote_labels(
+    quotations: Sequence[Mapping[str, Any]],
+) -> list[str]:
+    """Create stable display labels so multiple bids from one supplier stay distinct."""
+    supplier_counts: dict[str, int] = {}
+    for quotation in quotations:
+        supplier = str(quotation.get("supplier") or "Unknown").strip() or "Unknown"
+        key = supplier.casefold()
+        supplier_counts[key] = supplier_counts.get(key, 0) + 1
+
+    labels: list[str] = []
+    used: set[str] = set()
+    for index, quotation in enumerate(quotations, start=1):
+        supplier = str(quotation.get("supplier") or f"Quotation {index}").strip()
+        if supplier_counts.get(supplier.casefold(), 0) > 1:
+            detail = str(quotation.get("quote_reference") or "").strip()
+            if not detail:
+                source = str(quotation.get("source_document") or "").replace("\\", "/")
+                detail = source.rsplit("/", 1)[-1].strip()
+            detail = detail or f"Quote {index}"
+            label = f"{supplier} — {detail}"
+        else:
+            label = supplier
+
+        base = label
+        suffix = 2
+        while label.casefold() in used:
+            label = f"{base} ({suffix})"
+            suffix += 1
+        labels.append(label)
+        used.add(label.casefold())
+
+    return labels
+
+
 def build_comparison_matrix(
     quotations: Sequence[Mapping[str, Any]],
     scores: Sequence[Mapping[str, Any]] | None = None,
@@ -405,7 +442,9 @@ def build_comparison_matrix(
     lowest = min(priced, key=lambda item: item[2]) if comparable and priced else None
     highest = max(priced, key=lambda item: item[2]) if comparable and priced else None
 
+    quote_labels = _comparison_quote_labels(quotations)
     supplier_summaries = []
+
     def score_identity(item):
         return (
             str(item.get("supplier") or "").strip().casefold(),
@@ -429,7 +468,9 @@ def build_comparison_matrix(
             delta = round(amount - lowest[2], 2)
             delta_percent = round((amount - lowest[2]) / lowest[2] * 100, 2) if lowest[2] else 0.0
         supplier_summaries.append({
+            "quote_label": quote_labels[index],
             "supplier": supplier,
+            "quote_reference": quotation.get("quote_reference"),
             "source_document": quotation.get("source_document"),
             "total_cost": amount,
             "currency": quotation.get("currency"),
@@ -469,7 +510,9 @@ def build_comparison_matrix(
                 "not_listed_by": [],
             })
             group["offers"].append({
+                "quote_label": quote_labels[index],
                 "supplier": supplier,
+                "quote_reference": quotation.get("quote_reference"),
                 "quantity": _num(item.get("quantity")),
                 "unit": item.get("unit"),
                 "unit_price": _num(item.get("unit_price")),
@@ -480,14 +523,11 @@ def build_comparison_matrix(
             })
 
     line_items = []
-    all_suppliers = [
-        str(quotation.get("supplier") or f"Quotation {index + 1}")
-        for index, quotation in enumerate(quotations)
-    ]
+    all_quote_labels = quote_labels
     for group in grouped.values():
-        offered = {offer["supplier"] for offer in group["offers"]}
+        offered = {offer["quote_label"] for offer in group["offers"]}
         group["not_listed_by"] = [
-            supplier for supplier in all_suppliers if supplier not in offered
+            quote_label for quote_label in all_quote_labels if quote_label not in offered
         ]
         priced_offers = [
             offer for offer in group["offers"]
@@ -517,7 +557,7 @@ def build_comparison_matrix(
         line_items.append(group)
 
     pricing_reconciliation = []
-    for quotation in quotations:
+    for index, quotation in enumerate(quotations):
         subtotal = _num(quotation.get("subtotal"))
         total = _num(quotation.get("total_cost"))
         components = {
@@ -543,7 +583,10 @@ def build_comparison_matrix(
                 "matched" if abs(difference) <= tolerance else "review"
             ) if all_components_reported else "partial_check"
         pricing_reconciliation.append({
+            "quote_label": quote_labels[index],
             "supplier": quotation.get("supplier"),
+            "quote_reference": quotation.get("quote_reference"),
+            "source_document": quotation.get("source_document"),
             "currency": quotation.get("currency"),
             "subtotal": subtotal,
             **components,
