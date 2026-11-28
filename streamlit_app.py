@@ -1276,7 +1276,11 @@ def _render_decision_cockpit(result: dict) -> None:
     )
 
 
-def _render_recommendation(result: dict) -> None:
+def _render_recommendation(
+    result: dict,
+    *,
+    show_award_checklist: bool = True,
+) -> None:
     rec = (
         (result.get("recommendation", {}) or {})
         .get("recommendations", {})
@@ -1349,7 +1353,7 @@ def _render_recommendation(result: dict) -> None:
                 st.warning(str(item))
 
     action_items = rec.get("action_items", []) or []
-    if action_items:
+    if action_items and show_award_checklist:
         st.markdown(
             '<div class="qs-section-kicker qs-section-spaced">BEFORE AWARDING</div>',
             unsafe_allow_html=True,
@@ -2068,7 +2072,7 @@ def main():
     )
 
     with tabs[0]:
-        _render_recommendation(result)
+        _render_recommendation(result, show_award_checklist=False)
 
         if result.get("analysis_settings"):
             with st.expander("Analysis settings used", expanded=False):
