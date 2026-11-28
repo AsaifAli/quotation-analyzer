@@ -241,12 +241,14 @@ def _unwrap_records(payload: Any) -> List[Dict[str, Any]]:
         return [x for x in payload if isinstance(x, dict)]
     if not isinstance(payload, dict):
         return []
+    # A single quotation may itself contain an "items" line-item array.
+    # Recognize the quotation envelope before looking for outer record lists.
+    if any(_first(payload, aliases) is not None for aliases in _FIELD_ALIASES.values()):
+        return [payload]
     for key in ("quotations", "quotes", "results", "items", "records", "data"):
         candidate = payload.get(key)
         if isinstance(candidate, list):
             return [x for x in candidate if isinstance(x, dict)]
-    if any(_first(payload, aliases) is not None for aliases in _FIELD_ALIASES.values()):
-        return [payload]
     return []
 
 
