@@ -358,6 +358,8 @@ def score_quotations(
         results.append(
             {
                 "supplier": supplier,
+                "source_document": quotation.get("source_document"),
+                "quote_reference": quotation.get("quote_reference"),
                 "score": score,
                 "cost_score": (
                     round(cost_score, 1) if cost_score is not None else None
@@ -404,14 +406,23 @@ def build_comparison_matrix(
     highest = max(priced, key=lambda item: item[2]) if comparable and priced else None
 
     supplier_summaries = []
-    score_by_supplier = {
-        str(item.get("supplier") or "").strip().casefold(): item
+    def score_identity(item):
+        return (
+            str(item.get("supplier") or "").strip().casefold(),
+            str(item.get("source_document") or "").strip().casefold(),
+            str(item.get("quote_reference") or "").strip().casefold(),
+            _num(item.get("total_cost")),
+            str(item.get("currency") or "").strip().upper(),
+        )
+
+    score_by_quote = {
+        score_identity(item): item
         for item in (scores or [])
     }
     for index, quotation in enumerate(quotations):
         amount = _num(quotation.get("total_cost"))
         supplier = str(quotation.get("supplier") or f"Quotation {index + 1}")
-        score = score_by_supplier.get(supplier.strip().casefold(), {})
+        score = score_by_quote.get(score_identity(quotation), {})
         delta = None
         delta_percent = None
         if comparable and amount is not None and lowest is not None:
