@@ -1545,6 +1545,46 @@ def _render_evidence(result: dict) -> None:
             st.markdown(item.get("text", ""))
 
 
+def _render_document_coverage(result: dict) -> None:
+    """Show which uploaded sources actually contributed quotation records."""
+    documents = result.get("documents", []) or []
+    if not documents:
+        return
+
+    rows = []
+    for document in documents:
+        quotations = document.get("quotations", []) or []
+        status = document.get("extraction_status") or (
+            "extracted" if quotations else "needs_review"
+        )
+        rows.append({
+            "Source file": document.get("source") or "Unknown file",
+            "Quotations extracted": len(quotations),
+            "Status": str(status).replace("_", " ").title(),
+            "Extraction passes": document.get("extraction_attempts", 0),
+            "Readable characters": document.get("characters", 0),
+            "Truncated": "Yes" if document.get("truncated") else "No",
+        })
+
+    issues = result.get("extraction_issues", []) or []
+    with st.expander(
+        f"Document extraction audit · {len(documents)} source file(s)",
+        expanded=bool(issues),
+    ):
+        st.dataframe(
+            pd.DataFrame(rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+        for issue in issues:
+            source = issue.get("source") or "A source file"
+            message = issue.get("message") or (
+                "No quotation record was extracted. "
+                "Review the document and try again."
+            )
+            st.warning(f"{source}: {message}")
+
+
 def _render_export_center(result: dict) -> None:
     st.markdown(
         '<div class="qs-section-kicker qs-section-spaced">'
@@ -2082,6 +2122,7 @@ def main():
     )
 
     _render_summary_metrics(result)
+    _render_document_coverage(result)
     _render_decision_cockpit(result)
     _render_supplier_snapshot(result)
     _render_export_center(result)
