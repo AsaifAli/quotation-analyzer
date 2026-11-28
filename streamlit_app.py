@@ -697,8 +697,18 @@ def _render_comparison_workspace(result: dict) -> None:
         ),
         {},
     )
+    scored_quotes = [
+        item for item in offers
+        if _safe_score(item.get("score")) is not None
+    ]
+    best_scored_quote = max(
+        scored_quotes,
+        key=lambda item: _safe_score(item.get("score")),
+        default={},
+    )
+    best_score = _safe_score(best_scored_quote.get("score"))
 
-    metric_cols = st.columns(4, gap="small")
+    metric_cols = st.columns(5, gap="small")
     metric_cols[0].metric("Quotes compared", len(offers))
     metric_cols[1].metric(
         "Lowest comparable offer",
@@ -706,12 +716,17 @@ def _render_comparison_workspace(result: dict) -> None:
         help=lowest_quote.get("quote_label") or lowest_quote.get("supplier") or "",
     )
     metric_cols[2].metric(
+        "Highest weighted score",
+        f"{best_score:.1f} / 100" if best_score is not None else "Not scored",
+        help=best_scored_quote.get("quote_label") or best_scored_quote.get("supplier") or "",
+    )
+    metric_cols[3].metric(
         "Price spread",
         money(matrix.get("price_spread"), matrix.get("currency"))
         if comparable and matrix.get("price_spread") is not None
         else "—",
     )
-    metric_cols[3].metric("Distinct line items", len(line_items))
+    metric_cols[4].metric("Distinct line items", len(line_items))
 
     if comparable:
         st.success(
@@ -1302,7 +1317,48 @@ def _render_recommendation(result: dict) -> None:
         unsafe_allow_html=True,
     )
 
-    with st.expander("Why this supplier?", expanded=True):
+    alternatives = rec.get("alternatives", []) or []
+    if alternatives:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">ALTERNATIVE BIDS</div>',
+            unsafe_allow_html=True,
+        )
+        for index, alternative in enumerate(alternatives, start=1):
+            if not isinstance(alternative, dict):
+                continue
+            alternative_supplier = str(
+                alternative.get("supplier") or f"Alternative {index}"
+            )
+            alternative_reason = str(
+                alternative.get("reason") or "No additional explanation was provided."
+            )
+            confidence = str(alternative.get("confidence") or "Not stated")
+            with st.container(border=True):
+                st.markdown(f"**{index}. {alternative_supplier}**")
+                st.write(alternative_reason)
+                st.caption(f"Qualitative confidence: {confidence}")
+
+    risk_assessment = rec.get("risk_assessment", []) or []
+    if risk_assessment:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">DECISION CONSIDERATIONS</div>',
+            unsafe_allow_html=True,
+        )
+        for item in risk_assessment:
+            if item is not None and str(item).strip():
+                st.warning(str(item))
+
+    action_items = rec.get("action_items", []) or []
+    if action_items:
+        st.markdown(
+            '<div class="qs-section-kicker qs-section-spaced">BEFORE AWARDING</div>',
+            unsafe_allow_html=True,
+        )
+        for item in action_items:
+            if item is not None and str(item).strip():
+                st.checkbox(str(item), key=f"qs-award-check-{hash(str(item))}")
+
+    with st.expander("Inspect full recommendation payload", expanded=False):
         st.json(rec)
 
 
