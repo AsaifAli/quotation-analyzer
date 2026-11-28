@@ -478,26 +478,24 @@ def build_comparison_matrix(
         group["not_listed_by"] = [
             supplier for supplier in all_suppliers if supplier not in offered
         ]
+        priced_offers = [
+            offer for offer in group["offers"]
+            if offer.get("unit_price") is not None
+        ]
         units = {
             str(offer.get("unit") or "").strip().lower()
-            for offer in group["offers"]
-            if offer.get("unit")
+            for offer in priced_offers
         }
         offer_currencies = {
             str(offer.get("currency") or "").strip().upper()
-            for offer in group["offers"]
-            if offer.get("unit_price") is not None
+            for offer in priced_offers
         }
-        unit_prices = [
-            offer.get("unit_price")
-            for offer in group["offers"]
-            if offer.get("unit_price") is not None
-        ]
+        unit_prices = [offer.get("unit_price") for offer in priced_offers]
         group["unit_price_comparable"] = (
-            len(group["offers"]) >= 2
+            len(priced_offers) >= 2
+            and all(offer.get("unit") and offer.get("currency") for offer in priced_offers)
             and len(units) == 1
             and len(offer_currencies) == 1
-            and len(unit_prices) >= 2
         )
         if group["unit_price_comparable"]:
             group["lowest_unit_price"] = min(unit_prices)
