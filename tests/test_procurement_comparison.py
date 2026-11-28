@@ -117,3 +117,56 @@ def test_comparison_matrix_keeps_distinct_same_supplier_quotes_paired_with_their
     assert by_source["contoso-revision-b.pdf"]["score"] == next(
         item["score"] for item in scores if item["source_document"] == "contoso-revision-b.pdf"
     )
+
+def test_comparison_matrix_distinguishes_multiple_bids_from_the_same_supplier():
+    quotations = [
+        {
+            "supplier": "Contoso",
+            "source_document": "contoso-revision-a.pdf",
+            "quote_reference": "A-100",
+            "currency": "INR",
+            "total_cost": 100000,
+            "line_items": [
+                {"description": "Industrial router", "quantity": 1, "unit": "unit", "unit_price": 1000, "total_price": 1000}
+            ],
+        },
+        {
+            "supplier": "Contoso",
+            "source_document": "contoso-revision-b.pdf",
+            "quote_reference": "B-200",
+            "currency": "INR",
+            "total_cost": 110000,
+            "line_items": [],
+        },
+        {
+            "supplier": "Northwind",
+            "source_document": "northwind.pdf",
+            "quote_reference": "N-300",
+            "currency": "INR",
+            "total_cost": 105000,
+            "line_items": [
+                {"description": "Industrial router", "quantity": 1, "unit": "unit", "unit_price": 1050, "total_price": 1050}
+            ],
+        },
+    ]
+
+    matrix = build_comparison_matrix(quotations, score_quotations(quotations))
+
+    assert [item["quote_label"] for item in matrix["suppliers"]] == [
+        "Contoso — A-100",
+        "Contoso — B-200",
+        "Northwind",
+    ]
+    router = next(item for item in matrix["line_items"] if item["description"] == "Industrial router")
+    assert [offer["quote_label"] for offer in router["offers"]] == [
+        "Contoso — A-100",
+        "Northwind",
+    ]
+    assert router["not_listed_by"] == ["Contoso — B-200"]
+
+    revisions = [
+        item for item in matrix["pricing_reconciliation"]
+        if item.get("supplier") == "Contoso"
+    ]
+    assert [item["quote_reference"] for item in revisions] == ["A-100", "B-200"]
+
