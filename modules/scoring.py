@@ -190,6 +190,19 @@ def detect_risks(
             items.append(("medium", "Warranty information is missing."))
         if "100% upfront" in text or "full payment upfront" in text:
             items.append(("high", "Full upfront payment is stated."))
+        payment_text = str(quotation.get("payment_terms") or "").strip().lower()
+        if not payment_text and "payment" not in text:
+            items.append(("low", "Payment terms are not stated."))
+        exclusions = quotation.get("exclusions") or []
+        if isinstance(exclusions, str):
+            exclusions = [exclusions]
+        if exclusions:
+            items.append((
+                "medium",
+                "The quotation lists exclusions; confirm that the omitted scope is acceptable.",
+            ))
+        if quotation.get("tax_amount") is None and quotation.get("tax_included") is None:
+            items.append(("low", "Tax amount or tax-inclusion treatment is not stated."))
         if not quotation.get("delivery_timeline"):
             items.append(("medium", "Delivery timeline is missing."))
         if not quotation.get("validity_period"):
@@ -366,3 +379,175 @@ def score_quotations(
         key=lambda item: item["score"] if item["score"] is not None else -1,
         reverse=True,
     )
+
+
+
+def build_comparison_matrix(
+    quotations: Sequence[Mapping[str, Any]],
+    scores: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Build a factual supplier matrix; never infer an unlisted item is excluded."""
+    comparable, comparability_reason = _cost_comparability(quotations)
+    priced = [
+        (index, quotation, _num(quotation.get("total_cost")))
+        for index, quotation in enumerate(quotations)
+        if _num(quotation.get("total_cost")) is not None
+    ]
+    currencies = {
+        str(quotation.get("currency") or "").strip().upper()
+        for _, quotation, _ in priced
+    }
+    lowest = min(priced, key=lambda item: item[2]) if comparable and priced else None
+    highest = max(priced, key=lambda item: item[2]) if comparable and priced else None
+
+    supplier_summaries = []
+    score_by_index = list(scores or [])
+    for index, quotation in enumerate(quotations):
+        amount = _num(quotation.get("total_cost"))
+        supplier = str(quotation.get("supplier") or f"Quotation {index + 1}")
+        score = score_by_index[index] if index < len(score_by_index) else {}
+        delta = None
+        delta_percent = None
+        if comparable and amount is not None and lowest is not None:
+            delta = round(amount - lowest[2], 2)
+            delta_percent = round((amount - lowest[2]) / lowest[2] * 100, 2) if lowest[2] else 0.0
+        supplier_summaries.append({
+            "supplier": supplier,
+            "source_document": quotation.get("source_document"),
+            "total_cost": amount,
+            "currency": quotation.get("currency"),
+            "price_difference_from_lowest": delta,
+            "percent_above_lowest": delta_percent,
+            "score": score.get("score"),
+            "delivery_timeline": quotation.get("delivery_timeline"),
+            "payment_terms": quotation.get("payment_terms") or quotation.get("terms_conditions"),
+            "warranty": quotation.get("warranty"),
+            "support": quotation.get("support"),
+            "validity_period": quotation.get("validity_period"),
+            "tax_amount": _num(quotation.get("tax_amount")),
+            "tax_included": quotation.get("tax_included"),
+            "shipping_cost": _num(quotation.get("shipping_cost")),
+            "discount_amount": _num(quotation.get("discount_amount")),
+            "additional_charges": _num(quotation.get("additional_charges")),
+            "exclusions": quotation.get("exclusions") or [],
+            "line_item_count": len(quotation.get("line_items") or []),
+        })
+
+    # Item matching is deliberately conservative: only normalized exact
+    # descriptions are aligned. Similar wording remains separate for review.
+    grouped: dict[str, dict[str, Any]] = {}
+    for index, quotation in enumerate(quotations):
+        supplier = str(quotation.get("supplier") or f"Quotation {index + 1}")
+        items = quotation.get("line_items") or []
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            description = str(item.get("description") or "").strip()
+            key = re.sub(r"[^a-z0-9]+", " ", description.lower()).strip()
+            if not key:
+                continue
+            group = grouped.setdefault(key, {
+                "description": description,
+                "offers": [],
+                "not_listed_by": [],
+            })
+            group["offers"].append({
+                "supplier": supplier,
+                "quantity": _num(item.get("quantity")),
+                "unit": item.get("unit"),
+                "unit_price": _num(item.get("unit_price")),
+                "total_price": _num(item.get("total_price")),
+                "notes": item.get("notes"),
+                "currency": quotation.get("currency"),
+                "source_document": quotation.get("source_document"),
+            })
+
+    line_items = []
+    all_suppliers = [
+        str(quotation.get("supplier") or f"Quotation {index + 1}")
+        for index, quotation in enumerate(quotations)
+    ]
+    for group in grouped.values():
+        offered = {offer["supplier"] for offer in group["offers"]}
+        group["not_listed_by"] = [
+            supplier for supplier in all_suppliers if supplier not in offered
+        ]
+        units = {
+            str(offer.get("unit") or "").strip().lower()
+            for offer in group["offers"]
+            if offer.get("unit")
+        }
+        offer_currencies = {
+            str(offer.get("currency") or "").strip().upper()
+            for offer in group["offers"]
+            if offer.get("unit_price") is not None
+        }
+        unit_prices = [
+            offer.get("unit_price")
+            for offer in group["offers"]
+            if offer.get("unit_price") is not None
+        ]
+        group["unit_price_comparable"] = (
+            len(group["offers"]) >= 2
+            and len(units) == 1
+            and len(offer_currencies) == 1
+            and len(unit_prices) >= 2
+        )
+        if group["unit_price_comparable"]:
+            group["lowest_unit_price"] = min(unit_prices)
+            group["highest_unit_price"] = max(unit_prices)
+        else:
+            group["lowest_unit_price"] = None
+            group["highest_unit_price"] = None
+        line_items.append(group)
+
+    pricing_reconciliation = []
+    for quotation in quotations:
+        subtotal = _num(quotation.get("subtotal"))
+        total = _num(quotation.get("total_cost"))
+        components = {
+            "tax_amount": _num(quotation.get("tax_amount")),
+            "shipping_cost": _num(quotation.get("shipping_cost")),
+            "discount_amount": _num(quotation.get("discount_amount")),
+            "additional_charges": _num(quotation.get("additional_charges")),
+        }
+        reported = [value for value in components.values() if value is not None]
+        if subtotal is None or total is None or not reported:
+            status = "insufficient_data"
+            expected = None
+            difference = None
+        else:
+            expected = subtotal + sum(
+                value for key, value in components.items()
+                if key != "discount_amount" and value is not None
+            ) - (components["discount_amount"] or 0.0)
+            difference = round(total - expected, 2)
+            all_components_reported = all(value is not None for value in components.values())
+            tolerance = max(1.0, abs(total) * 0.01)
+            status = (
+                "matched" if abs(difference) <= tolerance else "review"
+            ) if all_components_reported else "partial_check"
+        pricing_reconciliation.append({
+            "supplier": quotation.get("supplier"),
+            "currency": quotation.get("currency"),
+            "subtotal": subtotal,
+            **components,
+            "stated_total": total,
+            "calculated_total_from_reported_components": round(expected, 2) if expected is not None else None,
+            "difference": difference,
+            "status": status,
+            "tax_included": quotation.get("tax_included"),
+        })
+
+    return {
+        "cost_comparable": comparable,
+        "cost_comparability_reason": comparability_reason,
+        "currency": next(iter(currencies)) if len(currencies) == 1 else None,
+        "lowest_price_supplier": lowest[1].get("supplier") if lowest else None,
+        "lowest_price": lowest[2] if lowest else None,
+        "highest_price": highest[2] if highest else None,
+        "price_spread": round(highest[2] - lowest[2], 2) if lowest and highest else None,
+        "suppliers": supplier_summaries,
+        "line_items": line_items,
+        "pricing_reconciliation": pricing_reconciliation,
+    }
