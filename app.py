@@ -385,6 +385,8 @@ async def analyze(
     query: str = Form("Analyze quotations"),
     criteria: str = Form(""),
     weights: str = Form(""),
+    do_market: bool = Form(False),
+    market_query: str = Form(""),
 ):
     if not files:
         raise HTTPException(
@@ -398,10 +400,10 @@ async def analyze(
             detail="Too many files in one request.",
         )
 
-    if len(query) + len(criteria) > config.MAX_QUERY_CHARS:
+    if len(query) + len(criteria) + len(market_query) > config.MAX_QUERY_CHARS:
         raise HTTPException(
             status_code=413,
-            detail="Query and criteria exceed the configured length limit.",
+            detail="Query, criteria and market scope exceed the configured length limit.",
         )
     scoring_weights = _parse_scoring_weights(weights)
 
@@ -497,6 +499,8 @@ async def analyze(
             query=query,
             criteria=criteria_list,
             weights=scoring_weights,
+            do_market=do_market,
+            market_query=market_query,
         )
 
         result["uploaded_files"] = names
@@ -560,8 +564,8 @@ async def analyze_stream(
         raise HTTPException(status_code=400, detail="At least one quotation file is required.")
     if len(files) > config.MAX_UPLOAD_FILES:
         raise HTTPException(status_code=413, detail="Too many files in one request.")
-    if len(query) + len(criteria) > config.MAX_QUERY_CHARS:
-        raise HTTPException(status_code=413, detail="Query and criteria exceed the configured length limit.")
+    if len(query) + len(criteria) + len(market_query) > config.MAX_QUERY_CHARS:
+        raise HTTPException(status_code=413, detail="Query, criteria and market scope exceed the configured length limit.")
     scoring_weights = _parse_scoring_weights(weights)
 
     paths = []
@@ -665,6 +669,8 @@ async def analyze_stream(
                 query=query,
                 criteria=criteria_list,
                 weights=scoring_weights,
+                do_market=do_market,
+                market_query=market_query,
                 stage_callback=publish_stage,
             )
         finally:
