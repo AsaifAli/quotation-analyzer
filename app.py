@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import tempfile
 
@@ -59,7 +60,7 @@ def _parse_scoring_weights(raw: str) -> dict | None:
             number = float(amount)
         except (TypeError, ValueError, OverflowError):
             raise HTTPException(status_code=422, detail=f"Weight for {key} must be a non-negative number.") from None
-        if not __import__("math").isfinite(number) or number < 0:
+        if not math.isfinite(number) or number < 0:
             raise HTTPException(status_code=422, detail=f"Weight for {key} must be a finite non-negative number.")
         weights[key] = number
     if not any(weights.values()):
