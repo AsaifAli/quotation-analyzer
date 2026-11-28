@@ -103,6 +103,25 @@ PORTFOLIO_SESSION_GATEWAY_URL=https://<gateway-host>
 
 `LLM_GATEWAY_URL` is the OpenAI-compatible inference and session-status base and must end in `/v1`. `PORTFOLIO_SESSION_GATEWAY_URL` is the gateway root used for code exchange. Do not point the exchange URL at local LiteLLM. If Streamlit loses its browser session state, launch QuoteSense again from the portfolio to obtain a fresh code.
 
+
+### Runtime evaluation signals
+
+On successful document analysis, QuoteSense sends a separate `evaluation.completed` event containing deterministic procurement checks:
+
+- Extraction completeness and quotation validation pass rate.
+- Deterministic supplier score coverage.
+- Currency/total-cost comparability and comparable line-item rate.
+- Price reconciliation coverage, match and review rates.
+- Risk finding count and proportion of quotations with risk findings.
+- Price anomaly count.
+- Whether qualitative analysis and a primary recommendation were produced.
+
+These scores are computed from the same validation, deterministic scoring, comparison and reconciliation outputs used by the procurement workspace. They are **not LLM-as-a-judge scores** and do not mean a supplier decision has been approved.
+
+The event contains only numeric values and optional experiment lineage. Supplier names, source document names, extracted quotation fields, individual prices, line-item descriptions, risk messages, prompts and generated recommendation text are excluded. The existing `run.completed` / `run.failed` activity event remains unchanged.
+
+Optional lineage environment variables are `EVALUATION_EXPERIMENT_ID`, `EVALUATION_DATASET_VERSION`, `EVALUATION_PROMPT_VERSION` and `EVALUATION_CONFIG_VERSION`. Set them only when the corresponding dataset, prompt or scoring configuration version is known; otherwise leave them blank. Reporting remains best-effort and cannot interrupt document analysis.
+
 ## Local development
 
 Use the repository's Docker Compose or documented API/UI startup path. The project also supports optional local inference through the existing configuration.
