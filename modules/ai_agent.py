@@ -176,7 +176,7 @@ class QuotationIntelligenceAgent:
         criteria=None,
         weights=None,
         preferences=None,
-        do_market=False,
+        do_market=None,
         analyze=True,
         stage_callback=None,
         market_query=None,
@@ -249,7 +249,7 @@ class QuotationIntelligenceAgent:
         criteria=None,
         weights=None,
         preferences=None,
-        do_market=False,
+        do_market=None,
         analyze=True,
         stage_emitter=None,
         market_query=None,
@@ -422,13 +422,11 @@ class QuotationIntelligenceAgent:
 
         lowered = query.lower()
 
-        if (
-            any(
-                keyword in lowered
-                for keyword in ["market", "benchmark", "industry"]
-            )
-            or do_market
-        ):
+        market_keyword_requested = any(
+            keyword in lowered
+            for keyword in ["market", "benchmark", "industry"]
+        )
+        if do_market is True or (do_market is None and market_keyword_requested):
             if stage_emitter:
                 stage_emitter(
                     "market_research",
