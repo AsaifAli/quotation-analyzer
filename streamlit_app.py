@@ -1354,9 +1354,9 @@ def _render_recommendation(result: dict) -> None:
             '<div class="qs-section-kicker qs-section-spaced">BEFORE AWARDING</div>',
             unsafe_allow_html=True,
         )
-        for item in action_items:
+        for index, item in enumerate(action_items, start=1):
             if item is not None and str(item).strip():
-                st.checkbox(str(item), key=f"qs-award-check-{hash(str(item))}")
+                st.checkbox(str(item), key=f"qs-award-check-{index}")
 
     with st.expander("Inspect full recommendation payload", expanded=False):
         st.json(rec)
