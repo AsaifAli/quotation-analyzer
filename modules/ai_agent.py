@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import config
-from harness_telemetry import record_event
+from harness_telemetry import build_quote_evaluation_metrics, record_event
 
 from .document_processor import DocumentProcessor
 from .llm_provider import LLMProvider
@@ -227,12 +227,14 @@ class QuotationIntelligenceAgent:
 
         result_metrics = result.get("metrics") or {}
         completed = result.get("status") == "success"
+        duration_ms = (time.perf_counter() - started) * 1000
+        model_label = result.get("model") or result_metrics.get("llm_model")
         record_event(
             event_type="run.completed" if completed else "run.failed",
             status="success" if completed else "warning",
             workflow="quotation_analysis",
-            duration_ms=(time.perf_counter() - started) * 1000,
-            model=result.get("model") or result_metrics.get("llm_model"),
+            duration_ms=duration_ms,
+            model=model_label,
             metrics={
                 "document_count": int(result_metrics.get("document_count") or 0),
                 "quotation_count": int(result_metrics.get("quotation_count") or 0),
@@ -240,6 +242,24 @@ class QuotationIntelligenceAgent:
                 "price_anomaly_count": len(result.get("price_anomalies") or []),
             },
         )
+
+        if completed:
+            try:
+                evaluation_metrics = build_quote_evaluation_metrics(result)
+                if evaluation_metrics:
+                    record_event(
+                        event_type="evaluation.completed",
+                        status="success",
+                        workflow="quotation_analysis",
+                        duration_ms=duration_ms,
+                        model=model_label,
+                        model_version=model_label,
+                        metrics=evaluation_metrics,
+                    )
+            except Exception:
+                # Evaluation telemetry must never interrupt procurement analysis.
+                logger.debug("quote_runtime_evaluation_not_recorded", exc_info=True)
+
         return result
 
     def _process_documents(
