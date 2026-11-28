@@ -27,6 +27,7 @@ from .scoring import (
     detect_risks,
     detect_price_anomalies,
     normalize_weights,
+    build_comparison_matrix,
 )
 from .web_search import WebSearch
 
@@ -142,7 +143,10 @@ class QuotationIntelligenceAgent:
 
         quotations = [
             self._attach_evidence(
-                quotation.model_dump(),
+                {
+                    **quotation.model_dump(),
+                    "source_document": data["source"],
+                },
                 data["evidence"],
             )
             for quotation in parsed.quotations
@@ -389,6 +393,10 @@ class QuotationIntelligenceAgent:
             "quotations": quotations,
             "validation": self.state.validation,
             "scores": self.state.scores,
+            "comparison_matrix": build_comparison_matrix(
+                quotations,
+                self.state.scores,
+            ),
             "risks": self.state.risks,
             "price_anomalies": anomalies,
             "weights": normalize_weights(weights),
